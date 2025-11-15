@@ -213,7 +213,7 @@ class BarcodeOCRService
 
         // التحقق من وجود zbarimg في PATH
         $output = shell_exec('which zbarimg 2>&1');
-        if (!empty(trim($output)) {
+        if (!empty(trim($output))) {
             Log::info("ZBar found in PATH: $output");
             $this->zbarPath = 'zbarimg';
             return 'zbarimg';
