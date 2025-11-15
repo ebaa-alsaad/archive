@@ -104,7 +104,7 @@
 </div>
 
 {{-- CSS --}}
-     /* file_get_contents(resource_path('views/auth/login-styles.css'))  */
+
 <style>
     /* 1. أنماط الحركة والظلال */
     .shadow-5xl {
