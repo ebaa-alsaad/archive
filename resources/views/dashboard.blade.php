@@ -37,7 +37,7 @@
                 <h3 class="text-lg font-semibold text-yellow-800">المستخدمين الحاليين</h3>
                 <i class="fa-solid fa-users text-4xl text-yellow-500 opacity-70"></i>
             </div>
-            <p class="text-6xl font-extrabold text-yellow-600">3</p>
+            <p class="text-6xl font-extrabold text-yellow-600">{{ $usersCount }}</p>
         </div>
 
     </div>
