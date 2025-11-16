@@ -52,7 +52,6 @@
         </div>
 
         <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {{-- هنا يتم استخدام x-file-card. يجب تعديلها لاحقاً لضمان تناسقها مع التصميم الجديد --}}
             @forelse ($uploads as $upload)
                 <x-file-card :upload="$upload" />
             @empty
