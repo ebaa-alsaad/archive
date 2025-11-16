@@ -14,9 +14,9 @@ class BarcodeOCRService
 
     public function processPdf($upload)
     {
-        set_time_limit(300);
+        set_time_limit(600);
+        ini_set('memory_limit', '512M');
 
-        // === المسار الصحيح لـ Ubuntu ===
         $pdfPath = Storage::disk('private')->path($upload->stored_filename);
 
         if (!file_exists($pdfPath)) {
@@ -24,7 +24,7 @@ class BarcodeOCRService
         }
 
         $pageCount = $this->getPageCount($pdfPath);
-        Log::info("PDF has $pageCount pages");
+        Log::info("Processing large PDF with $pageCount pages");
 
         // الخطوة 1: العثور على الباركود في الصفحات
         $barcodePages = $this->findBarcodePages($pdfPath, $pageCount);
@@ -33,10 +33,13 @@ class BarcodeOCRService
             throw new Exception("No barcodes found in PDF");
         }
 
-        // الخطوة 2: لكل باركود، ابحث عن جميع الصفحات التي تحتوي على هذا الرقم
+        // الخطوة 2: تجميع الصفحات المرتبطة (بدون صفحات الباركود)
         $barcodeToAllPages = $this->findPagesWithBarcodeText($pdfPath, $pageCount, $barcodePages);
 
-        return $this->createGroupedPdfFiles($barcodeToAllPages, $upload);
+        // تنظيف الملفات المؤقتة
+        $this->cleanupTempFiles();
+
+        return $this->createGroupedPdfFiles($barcodeToAllPages, $pdfPath, $upload);
     }
 
     /**
@@ -65,45 +68,112 @@ class BarcodeOCRService
     }
 
     /**
-     * البحث عن جميع الصفحات التي تحتوي على نص الباركود
+     * البحث الشامل عن الصفحات المرتبطة (بدون صفحات الباركود)
      */
     private function findPagesWithBarcodeText($pdfPath, $pageCount, $barcodePages)
     {
         $barcodeToAllPages = [];
 
         foreach ($barcodePages as $barcodePage => $barcodeValue) {
-            Log::info("Searching for pages containing barcode: $barcodeValue");
+            Log::info("Searching for barcode: " . $this->getBarcodeDisplay($barcodeValue));
 
-            $allPagesWithThisBarcode = [];
+            // معالجة الباركود للبحث
+            $searchPatterns = $this->generateSearchPatterns($barcodeValue);
 
-            for ($page = 1; $page <= $pageCount; $page++) {
-                // استبعاد صفحة الباركود الأصلية
-                if ($page == $barcodePage) continue;
+            // البحث الشامل في جميع الصفحات (بدون صفحات الباركود)
+            $relatedPages = $this->comprehensiveSearch($pdfPath, $pageCount, $barcodePage, $searchPatterns, array_keys($barcodePages));
 
-                try {
-                    if ($this->pageContainsText($pdfPath, $page, $barcodeValue)) {
-                        Log::info("Page $page contains barcode text: $barcodeValue");
-                        $allPagesWithThisBarcode[] = $page;
-                    }
-                } catch (Exception $e) {
-                    Log::error("Error searching page $page: " . $e->getMessage());
-                }
-            }
-
-            // ترتيب الصفحات
-            sort($allPagesWithThisBarcode);
-
-            $barcodeToAllPages[$barcodeValue] = $allPagesWithThisBarcode;
-            Log::info("Barcode $barcodeValue found in pages: " . implode(', ', $allPagesWithThisBarcode));
+            $barcodeToAllPages[$barcodeValue] = $relatedPages;
+            Log::info("Barcode '{$this->getBarcodeDisplay($barcodeValue)}' associated with pages: " . implode(', ', $relatedPages));
         }
 
         return $barcodeToAllPages;
     }
 
     /**
-     * التحقق إذا كانت الصفحة تحتوي على النص المطلوب
+     * بحث شامل في جميع الصفحات (بدون صفحات الباركود)
      */
-    private function pageContainsText($pdfPath, $page, $searchText)
+    private function comprehensiveSearch($pdfPath, $pageCount, $barcodePage, $searchPatterns, $allBarcodePages)
+    {
+        $relatedPages = []; // لا نضيف صفحة الباركود الأصلية
+        $foundPages = [];
+
+        Log::info("Searching all $pageCount pages for " . count($searchPatterns) . " patterns (excluding barcode pages)");
+
+        // البحث في جميع الصفحات بأنماط فعالة
+        for ($page = 1; $page <= $pageCount; $page++) {
+            // تخطي جميع صفحات الباركود
+            if (in_array($page, $allBarcodePages)) {
+                continue;
+            }
+
+            $content = $this->extractPageText($pdfPath, $page);
+
+            foreach ($searchPatterns as $pattern) {
+                if (strlen($pattern) >= 4 && str_contains($content, $pattern)) {
+                    $foundPages[] = $page;
+                    Log::info("Pattern '$pattern' found in page $page");
+                    break; // انتقل للصفحة التالية
+                }
+            }
+
+            // تحديث التقدم كل 10 صفحات
+            if ($page % 10 === 0) {
+                Log::info("Search progress: $page/$pageCount pages, found " . count($foundPages) . " matches");
+            }
+        }
+
+        $relatedPages = array_merge($relatedPages, $foundPages);
+        $relatedPages = array_unique($relatedPages);
+        sort($relatedPages);
+
+        Log::info("Search completed: " . count($relatedPages) . " related pages found (excluding barcode page)");
+
+        return $relatedPages;
+    }
+
+    /**
+     * توليد أنماط بحث من الباركود
+     */
+    private function generateSearchPatterns($barcode)
+    {
+        $patterns = [];
+
+        // النمط الأصلي
+        $patterns[] = $barcode;
+
+        // إذا كان الباركود طويلاً (Base64)
+        if (strlen($barcode) > 50) {
+            try {
+                $decoded = base64_decode($barcode);
+                if ($decoded) {
+                    // البحث عن أرقام في المحتوى المفكوك
+                    if (preg_match_all('/\d{4,}/', $decoded, $matches)) {
+                        $patterns = array_merge($patterns, $matches[0]);
+                    }
+                }
+            } catch (Exception $e) {
+                Log::warning("Base64 decoding failed for barcode pattern generation");
+            }
+
+            // أنماط للباركودات الطويلة
+            $patterns[] = substr($barcode, 0, 15);
+            $patterns[] = substr($barcode, -15);
+        }
+
+        // إزالة القيم الفارغة والتكرار
+        $patterns = array_filter($patterns);
+        $patterns = array_unique($patterns);
+
+        Log::info("Generated " . count($patterns) . " search patterns");
+
+        return $patterns;
+    }
+
+    /**
+     * استخراج النص من الصفحة
+     */
+    private function extractPageText($pdfPath, $page)
     {
         try {
             $tempDir = storage_path("app/temp");
@@ -111,30 +181,60 @@ class BarcodeOCRService
                 mkdir($tempDir, 0775, true);
             }
 
-            $tempTextFile = $tempDir . "/page_{$page}_text_" . time() . ".txt";
+            $tempTextFile = $tempDir . "/extract_page_{$page}_" . time() . ".txt";
 
-            // === الأمر المعدل لـ Ubuntu ===
             $cmd = "pdftotext -f {$page} -l {$page} -layout " . escapeshellarg($pdfPath) . " " . escapeshellarg($tempTextFile) . " 2>&1";
-            Log::info("Running pdftotext command: $cmd");
-
-            $output = shell_exec($cmd);
-            Log::info("pdftotext output: " . $output);
+            shell_exec($cmd);
 
             if (file_exists($tempTextFile)) {
                 $content = file_get_contents($tempTextFile);
-                $contains = str_contains($content, $searchText);
-
                 unlink($tempTextFile);
-                return $contains;
+                return $content;
             }
 
-            return false;
+            return "";
         } catch (Exception $e) {
-            Log::error("Error checking text in page $page: " . $e->getMessage());
-            return false;
+            Log::error("Error extracting text from page $page: " . $e->getMessage());
+            return "";
         }
     }
 
+    /**
+     * تحويل صفحة PDF إلى صورة
+     */
+    private function convertToImage($pdfPath, $page)
+    {
+        $tempDir = storage_path("app/temp");
+        if (!file_exists($tempDir)) {
+            mkdir($tempDir, 0775, true);
+        }
+
+        $baseName = "page_{$page}_" . time();
+        $pngPath = $tempDir . "/" . $baseName . ".png";
+
+        $cmd = "pdftoppm -f $page -l $page -png -r 200 -singlefile " .
+               escapeshellarg($pdfPath) . " " .
+               escapeshellarg($tempDir . "/" . $baseName) . " 2>&1";
+
+        Log::info("Running pdftoppm command: $cmd");
+        $output = shell_exec($cmd);
+
+        sleep(1);
+
+        if (file_exists($pngPath)) {
+            return $pngPath;
+        } else {
+            $files = glob($tempDir . "/" . $baseName . ".*");
+            if (!empty($files)) {
+                return $files[0];
+            }
+            return null;
+        }
+    }
+
+    /**
+     * قراءة الباركود من الصفحة
+     */
     private function readPageBarcode($pdfPath, $page)
     {
         $image = $this->convertToImage($pdfPath, $page);
@@ -153,41 +253,8 @@ class BarcodeOCRService
         return $barcode;
     }
 
-    private function convertToImage($pdfPath, $page)
-    {
-        $tempDir = storage_path("app/temp");
-        if (!file_exists($tempDir)) {
-            mkdir($tempDir, 0775, true);
-        }
-
-        $baseName = "page_{$page}_" . time();
-        $pngPath = $tempDir . "/" . $baseName . ".png";
-
-        // === الأمر المعدل لـ Ubuntu ===
-        $cmd = "pdftoppm -f $page -l $page -png -r 200 -singlefile " .
-               escapeshellarg($pdfPath) . " " .
-               escapeshellarg($tempDir . "/" . $baseName) . " 2>&1";
-
-        Log::info("Running pdftoppm command: $cmd");
-        $output = shell_exec($cmd);
-        Log::info("pdftoppm output: " . $output);
-
-        // وقت انتظار أقل على Linux
-        sleep(1);
-
-        if (file_exists($pngPath)) {
-            return $pngPath;
-        } else {
-            $files = glob($tempDir . "/" . $baseName . ".*");
-            if (!empty($files)) {
-                return $files[0];
-            }
-            return null;
-        }
-    }
-
     /**
-     * البحث عن مسار ZBar على Ubuntu
+     * البحث عن مسار ZBar
      */
     private function findZBarPath()
     {
@@ -195,12 +262,11 @@ class BarcodeOCRService
             return $this->zbarPath;
         }
 
-        // === المسارات على Ubuntu ===
         $possiblePaths = [
             '/usr/bin/zbarimg',
             '/usr/local/bin/zbarimg',
             '/bin/zbarimg',
-            'zbarimg' // إذا كان في PATH
+            'zbarimg'
         ];
 
         foreach ($possiblePaths as $path) {
@@ -211,7 +277,6 @@ class BarcodeOCRService
             }
         }
 
-        // التحقق من وجود zbarimg في PATH
         $output = shell_exec('which zbarimg 2>&1');
         if (!empty(trim($output))) {
             Log::info("ZBar found in PATH: $output");
@@ -223,6 +288,9 @@ class BarcodeOCRService
         return null;
     }
 
+    /**
+     * مسح الباركود من الصورة
+     */
     private function scanBarcode($imagePath)
     {
         $zbarPath = $this->findZBarPath();
@@ -232,7 +300,6 @@ class BarcodeOCRService
             return null;
         }
 
-        // === الأمر المعدل لـ Ubuntu ===
         $cmd = escapeshellarg($zbarPath) . " -q --raw " . escapeshellarg($imagePath) . " 2>&1";
         Log::info("Running ZBar command: $cmd");
         $output = shell_exec($cmd);
@@ -248,36 +315,8 @@ class BarcodeOCRService
     }
 
     /**
-     * التحقق من التبعيات على Ubuntu
+     * الحصول على عدد صفحات PDF
      */
-    public function checkDependencies()
-    {
-        $dependencies = [
-            'pdftoppm' => 'pdftoppm -v',
-            'pdftotext' => 'pdftotext -v',
-            'zbarimg' => 'zbarimg --version'
-        ];
-
-        $allGood = true;
-
-        foreach ($dependencies as $name => $cmd) {
-            $output = shell_exec($cmd . " 2>&1");
-
-            $isMissing = strpos($output, 'not found') !== false ||
-                        strpos($output, 'command not found') !== false ||
-                        empty($output);
-
-            if ($isMissing) {
-                Log::error("$name is missing on Ubuntu");
-                $allGood = false;
-            } else {
-                Log::info("$name is working on Ubuntu: " . substr($output, 0, 50));
-            }
-        }
-
-        return $allGood;
-    }
-
     public function getPageCount($pdfPath)
     {
         try {
@@ -286,7 +325,6 @@ class BarcodeOCRService
         } catch (Exception $e) {
             Log::error("Error getting page count: " . $e->getMessage());
 
-            // محاولة بديلة باستخدام pdfinfo على Ubuntu
             try {
                 $cmd = "pdfinfo " . escapeshellarg($pdfPath) . " 2>&1";
                 $output = shell_exec($cmd);
@@ -302,58 +340,90 @@ class BarcodeOCRService
         }
     }
 
-    private function createGroupedPdfFiles($barcodeToAllPages, $upload)
+    /**
+     * إنشاء ملفات PDF مجمعة
+     */
+    private function createGroupedPdfFiles($barcodeToAllPages, $pdfPath, $upload)
     {
         $created = [];
 
         foreach ($barcodeToAllPages as $barcode => $pages) {
             if (empty($pages)) {
+                Log::warning("No related pages found for barcode: " . $this->getBarcodeDisplay($barcode));
                 continue;
             }
 
-            $created[] = $this->createPdfGroup($pages, $barcode, $upload);
+            $group = $this->createPdfGroup($pages, $barcode, $pdfPath, $upload);
+
+            if ($group) {
+                $created[] = $group;
+                Log::info("Successfully created group for barcode: " . $this->getBarcodeDisplay($barcode) . " with " . count($pages) . " related pages");
+            } else {
+                Log::error("Failed to create group for barcode: " . $this->getBarcodeDisplay($barcode));
+            }
         }
 
         return $created;
     }
 
-    private function createPdfGroup($pages, $barcode, $upload)
+    /**
+     * إنشاء مجموعة PDF واحدة
+     */
+    private function createPdfGroup($pages, $barcode, $pdfPath, $upload)
     {
-        // استخدام الملف الأصلي من private storage
-        $pdfPath = Storage::disk('private')->path($upload->stored_filename);
+        try {
+            $pdf = new Fpdi();
+            $pdf->setSourceFile($pdfPath);
 
-        $pdf = new Fpdi();
-        $pdf->setSourceFile($pdfPath);
+            foreach ($pages as $page) {
+                $id = $pdf->importPage($page);
+                $pdf->AddPage();
+                $pdf->useTemplate($id);
+            }
 
-        foreach ($pages as $page) {
-            $id = $pdf->importPage($page);
-            $pdf->AddPage();
-            $pdf->useTemplate($id);
+            // إنشاء اسم ملف آمن
+            $safeBarcode = $this->createSafeFilename($barcode);
+            $filename = "{$safeBarcode}.pdf";
+            $directory = "groups";
+            $fullPath = storage_path("app/{$directory}");
+
+            if (!file_exists($fullPath)) {
+                mkdir($fullPath, 0775, true);
+            }
+
+            $path = "{$fullPath}/{$filename}";
+            $pdf->Output($path, 'F');
+
+            $dbPath = "{$directory}/{$filename}";
+
+            return Group::create([
+                'code' => $barcode,
+                'pdf_path' => $dbPath,
+                'pages_count' => count($pages),
+                'user_id' => $upload->user_id,
+                'upload_id' => $upload->id
+            ]);
+        } catch (Exception $e) {
+            Log::error("Error creating PDF group for barcode " . $this->getBarcodeDisplay($barcode) . ": " . $e->getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * إنشاء اسم ملف من الباركود
+     */
+    private function createSafeFilename($barcode)
+    {
+        // إذا كان الباركود طويلاً، نستخدم hash
+        if (strlen($barcode) > 50) {
+            return 'barcode_' . substr(md5($barcode), 0, 12);
         }
 
-        $filename = "{$barcode}.pdf";
-        $directory = "groups";
-        $full = storage_path("app/{$directory}");
+        // إزالة الأحرف غير الآمنة
+        $safeName = preg_replace('/[^a-zA-Z0-9_-]/', '_', $barcode);
+        $safeName = substr($safeName, 0, 50);
 
-        if (!file_exists($full)) {
-            mkdir($full, 0775, true);
-        }
-
-        $path = "{$full}/{$filename}";
-        $pdf->Output($path, 'F');
-
-        // المسار الذي سيتم حفظه في قاعدة البيانات
-        $dbPath = "{$directory}/{$filename}";
-
-        Log::info("PDF group created for barcode: $barcode with " . count($pages) . " pages");
-
-        return Group::create([
-            'code' => $barcode,
-            'pdf_path' => $dbPath,
-            'pages_count' => count($pages),
-            'user_id' => $upload->user_id,
-            'upload_id' => $upload->id
-        ]);
+        return $safeName ?: 'unknown_barcode';
     }
 
     /**
@@ -371,5 +441,16 @@ class BarcodeOCRService
             }
             Log::info("Cleaned up temp files: " . count($files) . " files removed");
         }
+    }
+
+    /**
+     * الحصول على عرض مختصر للباركود
+     */
+    private function getBarcodeDisplay($barcode)
+    {
+        if (strlen($barcode) > 30) {
+            return substr($barcode, 0, 20) . '...' . substr($barcode, -10);
+        }
+        return $barcode;
     }
 }

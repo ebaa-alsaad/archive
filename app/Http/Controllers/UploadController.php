@@ -6,26 +6,20 @@ use Illuminate\Http\Request;
 use App\Models\{Upload, Group};
 use App\Services\BarcodeOCRService;
 use Illuminate\Support\Facades\Log;
-use App\Services\DeepSeekOCRService;
 use Illuminate\Support\Facades\Storage;
 
 class UploadController extends Controller
 {
-    // protected $ocrService;
+    protected $barcodeService;
+    protected $BarcodeOCRService;
 
-    // public function __construct(DeepSeekOCRService $ocrService)
-    // {
-    //     $this->ocrService = $ocrService;
-    // }
-
-    protected $svc;
-
-    public function __construct(BarcodeOCRService $svc)
+    public function __construct(BarcodeOCRService $barcodeService, BarcodeOCRService $BarcodeOCRService)
     {
-        $this->svc = $svc;
+        $this->barcodeService = $barcodeService;
+        $this->BarcodeOCRService = $BarcodeOCRService;
     }
 
-   public function index()
+    public function index()
     {
         $uploads = Upload::with(['user', 'groups'])
             ->orderBy('created_at', 'desc')
@@ -59,16 +53,17 @@ class UploadController extends Controller
 
         return $diskInstance->response($path);
     }
+
     /**
-     * رفع ومعالجة الملف باستخدام DeepSeek-OCR
+     * رفع ومعالجة الملف باستخدام الخدمة المناسبة للحجم
      */
-   public function store(Request $request)
+    public function store(Request $request)
     {
         // رفع جميع الحدود لاستيعاب 70MB
         ini_set('upload_max_filesize', '70M');
         ini_set('post_max_size', '70M');
-        ini_set('max_execution_time', 300);
-        ini_set('max_input_time', 300);
+        ini_set('max_execution_time', 600);
+        ini_set('max_input_time', 600);
         ini_set('memory_limit', '512M');
 
         Log::info('Upload request received', [
@@ -101,7 +96,10 @@ class UploadController extends Controller
                 'file_size' => file_exists($fullPath) ? filesize($fullPath) : 0
             ]);
 
-             $pageCount = $this->svc->getPageCount($fullPath);
+            // اختيار الخدمة المناسبة بناءً على حجم الملف
+            $service = $this->selectService($fileSizeMB);
+
+            $pageCount = $service->getPageCount($fullPath);
             Log::info('PDF page count determined', ['total_pages' => $pageCount]);
 
             // إنشاء سجل الرفع مع عدد الصفحات
@@ -109,14 +107,15 @@ class UploadController extends Controller
                 'original_filename' => $file->getClientOriginalName(),
                 'stored_filename' => $storedName,
                 'total_pages' => $pageCount,
+                'file_size_mb' => $fileSizeMB,
                 'status' => 'processing',
                 'user_id' => auth()->id(),
             ]);
 
             Log::info('Upload record created', ['upload_id' => $upload->id]);
 
-            // المعالجة باستخدام Barcode-OCR
-            $groups = $this->svc->processPdf($upload);
+            // المعالجة باستخدام الخدمة المختارة
+            $groups = $service->processPdf($upload);
 
             // تحديث حالة الرفع
             $upload->update([
@@ -124,19 +123,20 @@ class UploadController extends Controller
                 'error_message' => null
             ]);
 
-            // === الإصلاح هنا ===
-            // $groups هي array من objects، ليس collection
+            // معالجة المجموعات
             $barcodes = [];
-            foreach ($groups as $group) {
-                $barcodes[] = $group->code;
+            if (!empty($groups) && is_array($groups)) {
+                foreach ($groups as $group) {
+                    if ($group instanceof Group && !empty($group->code)) {
+                        $barcodes[] = $group->code;
+                    }
+                }
             }
-            // أو بدلاً من loop:
-            // $barcodes = array_map(fn($group) => $group->code, $groups);
-            // ===================
 
             Log::info('Processing completed successfully', [
                 'barcodes_found' => count($barcodes),
-                'barcodes' => $barcodes
+                'barcodes' => $barcodes,
+                'service_used' => get_class($service)
             ]);
 
             return response()->json([
@@ -144,6 +144,7 @@ class UploadController extends Controller
                 'message' => "تمت معالجة الملف بنجاح ({$fileSizeMB} MB). تم العثور على " . count($barcodes) . " باركود",
                 'barcodes' => $barcodes,
                 'upload_id' => $upload->id,
+                'service_used' => get_class($service),
                 'redirect_url' => route('uploads.show', $upload)
             ]);
 
@@ -168,6 +169,22 @@ class UploadController extends Controller
         }
     }
 
+    /**
+     * اختيار الخدمة المناسبة بناءً على حجم الملف
+     */
+    private function selectService($fileSizeMB)
+    {
+        // للملفات الصغيرة (<10MB) استخدم الخدمة العادية
+        if ($fileSizeMB < 10) {
+            Log::info("Using standard BarcodeOCRService for small file: {$fileSizeMB}MB");
+            return $this->barcodeService;
+        }
+
+        // للملفات الكبيرة (>10MB) استخدم الخدمة المتقدمة
+        Log::info("Using BarcodeOCRService for large file: {$fileSizeMB}MB");
+        return $this->BarcodeOCRService;
+    }
+
     public function destroy(Upload $upload)
     {
         // حذف الملفات المرتبطة
@@ -188,43 +205,4 @@ class UploadController extends Controller
         return redirect()->route('uploads.index')
             ->with('success', 'تم حذف الملف والبيانات المرتبطة به بنجاح');
     }
-
-    /**
-     * فحص حالة DeepSeek-OCR API
-     */
-    // public function checkAPIStatus()
-    // {
-    //     try {
-    //         $status = $this->ocrService->checkAPIStatus();
-
-    //         return response()->json($status);
-    //     } catch (\Exception $e) {
-    //         return response()->json([
-    //             'success' => false,
-    //             'error' => $e->getMessage()
-    //         ], 500);
-    //     }
-    // }
-
-    /**
-     * معالجة مباشرة للصورة (للفحص)
-     */
-    // public function processImage(Request $request)
-    // {
-    //     $request->validate([
-    //         'image' => 'required|image|mimes:jpeg,png,jpg|max:5120'
-    //     ]);
-
-    //     try {
-    //         $imagePath = $request->file('image')->path();
-    //         $result = $this->ocrService->processPageWithDeepSeek($imagePath, 1);
-
-    //         return response()->json($result);
-    //     } catch (\Exception $e) {
-    //         return response()->json([
-    //             'success' => false,
-    //             'error' => $e->getMessage()
-    //         ], 500);
-    //     }
-    // }
 }

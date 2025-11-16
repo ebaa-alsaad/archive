@@ -31,8 +31,6 @@ Route::middleware(['auth'])->group(function () {
         // Custom routes
         Route::get('/{upload}/status', 'checkStatus')->name('status');
         Route::get('/uploaded-file/{upload}', 'showFile')->name('show_file');
-        Route::get('/api/status', 'checkAPIStatus')->name('api_status');
-        Route::post('/process-image', 'processImage')->name('process_image');
     });
 
      // ----------------------
