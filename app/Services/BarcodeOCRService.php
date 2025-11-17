@@ -109,51 +109,88 @@ class BarcodeOCRService
     private function generateFilenameWithOCR($pdfPath, $pages, $index, $barcode)
     {
         $firstPage = $pages[0];
-
-        // استخدام OCR لاستخراج النص من الصفحة الأولى
         $content = $this->extractTextWithOCR($pdfPath, $firstPage);
 
-        Log::info("OCR extracted content from page {$firstPage}: " . substr($content, 0, 200));
+        Log::info("OCR extracted content from page {$firstPage}: " . $content);
 
-        // 1. البحث عن رقم القيد
-        if (preg_match('/رقم\s*القيد\s*[:\-]?\s*(\d+)/u', $content, $matches)) {
-            $filename = 'قيد_' . $matches[1];
-            Log::info("Found رقم القيد via OCR: {$filename}");
-            return $this->sanitizeFilename($filename);
+        // 1. البحث عن رقم القيد بأنماط مختلفة
+        $qeedPatterns = [
+            '/رقم\s*القيد\s*[:\-]?\s*(\d+)/u',
+            '/القيد\s*[:\-]?\s*(\d+)/u',
+            '/قيد\s*[:\-]?\s*(\d+)/u',
+            '/رقم\s*[:\-]?\s*(\d+).*قيد/u',
+            '/(\b77\d{2}\b)/u' // بحث عن 77xx بشكل خاص
+        ];
+
+        foreach ($qeedPatterns as $pattern) {
+            if (preg_match($pattern, $content, $matches)) {
+                $filename = 'قيد_' . $matches[1];
+                Log::info("Found رقم القيد via OCR: {$filename} - Pattern: {$pattern}");
+                return $this->sanitizeFilename($filename);
+            }
         }
 
-        // 2. البحث عن رقم الفاتورة
-        if (preg_match('/رقم\s*الفاتورة\s*[:\-]?\s*(\d+)/u', $content, $matches)) {
-            $filename = 'فاتورة_' . $matches[1];
-            Log::info("Found رقم الفاتورة via OCR: {$filename}");
-            return $this->sanitizeFilename($filename);
+        // 2. البحث عن التاريخ بأنماط مختلفة
+        $datePatterns = [
+            '/(\d{2}\/\d{2}\/\d{4})/u', // 03/10/2023
+            '/(\d{2}-\d{2}-\d{4})/u',   // 03-10-2023
+            '/(\d{1,2}\/\d{1,2}\/\d{4})/u', // 3/10/2023
+            '/(\d{4}-\d{2}-\d{2})/u',   // 2023-10-03
+            '/(\d{1,2}\s*\/\s*\d{1,2}\s*\/\s*\d{4})/u' // 03 / 10 / 2023
+        ];
+
+        foreach ($datePatterns as $pattern) {
+            if (preg_match($pattern, $content, $matches)) {
+                $date = preg_replace('/\s+/', '', $matches[1]); // إزالة المسافات
+                $cleanDate = str_replace('/', '-', $date);
+                $filename = 'مستند_' . $cleanDate;
+                Log::info("Found تاريخ via OCR: {$filename} - Pattern: {$pattern}");
+                return $this->sanitizeFilename($filename);
+            }
         }
 
-        // 3. البحث عن رقم السند
-        if (preg_match('/رقم\s*السند\s*[:\-]?\s*(\d+)/u', $content, $matches)) {
-            $filename = 'سند_' . $matches[1];
-            Log::info("Found رقم السند via OCR: {$filename}");
-            return $this->sanitizeFilename($filename);
+        // 3. البحث عن أي أرقام مهمة
+        if (preg_match('/(\b\d{4,5}\b)/u', $content, $matches)) {
+            $number = $matches[1];
+            // تجاهل الأرقام التي تبدو كسنوات (مثل 2020, 2023)
+            if (!in_array($number, ['2020', '2021', '2022', '2023', '2024', '2025'])) {
+                $filename = 'مستند_' . $number;
+                Log::info("Found general number via OCR: {$filename}");
+                return $this->sanitizeFilename($filename);
+            }
         }
 
-        // 4. البحث عن تاريخ
-        if (preg_match('/(\d{2}\/\d{2}\/\d{4})/u', $content, $matches)) {
-            $filename = 'مستند_' . str_replace('/', '-', $matches[1]);
-            Log::info("Found تاريخ via OCR: {$filename}");
-            return $this->sanitizeFilename($filename);
+        // 4. استخدام أسماء وصفيّة بناءً على محتوى الصفحة
+        $descriptiveName = $this->getDescriptiveNameFromContent($content, $index, $barcode);
+        Log::info("Using descriptive name: {$descriptiveName}");
+        return $this->sanitizeFilename($descriptiveName);
+    }
+
+    /**
+     * إنشاء اسم وصفي بناءً على محتوى النص
+     */
+    private function getDescriptiveNameFromContent($content, $index, $barcode)
+    {
+        // البحث عن كلمات مفتاحية في المحتوى
+        $keywords = [
+            'كشف حساب' => 'كشف_حساب',
+            'تقرير' => 'تقرير',
+            'فاتورة' => 'فاتورة',
+            'سند' => 'سند',
+            'قيد' => 'قيد',
+            'حركة' => 'حركة',
+            'مصروفات' => 'مصروفات',
+            'شركة' => 'شركة'
+        ];
+
+        foreach ($keywords as $arabic => $filenamePart) {
+            if (strpos($content, $arabic) !== false) {
+                return $filenamePart . '_' . $barcode . '_' . ($index + 1);
+            }
         }
 
-        // 5. البحث عن أي رقم بارز في النص (كحل أخير)
-        if (preg_match('/\b(\d{4,})\b/u', $content, $matches)) {
-            $filename = 'مستند_' . $matches[1];
-            Log::info("Found general number via OCR: {$filename}");
-            return $this->sanitizeFilename($filename);
-        }
-
-        // 6. إذا فشل كل شيء، استخدام الباركود
-        $filename = 'مستند_' . $barcode . '_' . ($index + 1);
-        Log::info("Using fallback filename: {$filename}");
-        return $this->sanitizeFilename($filename);
+        // إذا لم يوجد شيء، استخدام التاريخ الحالي
+        return 'مستند_' . date('Y-m-d') . '_' . ($index + 1);
     }
 
     /**
@@ -162,41 +199,52 @@ class BarcodeOCRService
     private function extractTextWithOCR($pdfPath, $page)
     {
         try {
-            // تحويل صفحة PDF إلى صورة
             $imagePath = $this->convertToHighQualityImage($pdfPath, $page);
-            if (!$imagePath) {
-                Log::error("Failed to convert page {$page} to image");
-                return '';
-            }
+            if (!$imagePath) return '';
 
-            // استخدام tesseract للتعرف على النص العربي
             $tempDir = storage_path("app/temp");
             $outputFile = $tempDir . "/ocr_output_" . time();
 
-            $cmd = "tesseract " . escapeshellarg($imagePath) . " " .
-                   escapeshellarg($outputFile) . " -l ara+eng 2>&1";
+            // تجربة إعدادات Tesseract مختلفة
+            $tesseractConfigs = [
+                "-l ara+eng --psm 6 -c tessedit_char_whitelist=0123456789/:-", // للتواريخ والأرقام
+                "-l ara+eng --psm 4", // للكتلة الواحدة
+                "-l ara+eng --psm 3", // تلقائي
+                "-l ara+eng --psm 6"  // كتلة موحدة
+            ];
 
-            Log::info("Running OCR command: tesseract for page {$page}");
-            exec($cmd, $output, $returnVar);
+            $bestContent = '';
+            $bestLength = 0;
 
-            $content = '';
-            if (file_exists($outputFile . '.txt')) {
-                $content = file_get_contents($outputFile . '.txt');
-                $content = preg_replace('/\s+/', ' ', $content);
-                $content = trim($content);
-                @unlink($outputFile . '.txt');
-                Log::info("OCR successful for page {$page}, content length: " . strlen($content));
-            } else {
-                Log::error("OCR output file not found for page {$page}");
+            foreach ($tesseractConfigs as $config) {
+                $cmd = "tesseract " . escapeshellarg($imagePath) . " " .
+                    escapeshellarg($outputFile) . " {$config} 2>&1";
+
+                Log::info("Running OCR with config: {$config}");
+                exec($cmd, $output, $returnVar);
+
+                if (file_exists($outputFile . '.txt')) {
+                    $content = file_get_contents($outputFile . '.txt');
+                    $content = preg_replace('/\s+/', ' ', $content);
+                    $content = trim($content);
+
+                    // اختيار المحتوى الأفضل (الأطول)
+                    if (strlen($content) > $bestLength) {
+                        $bestContent = $content;
+                        $bestLength = strlen($content);
+                    }
+
+                    @unlink($outputFile . '.txt');
+                }
             }
 
-            // تنظيف الملف المؤقت
-            @unlink($imagePath);
+            Log::info("Best OCR content for page {$page}, length: " . $bestLength);
 
-            return $content;
+            @unlink($imagePath);
+            return $bestContent;
 
         } catch (Exception $e) {
-            Log::error("OCR extraction failed for page {$page}: " . $e->getMessage());
+            Log::error("OCR extraction failed: " . $e->getMessage());
             return '';
         }
     }
@@ -212,19 +260,48 @@ class BarcodeOCRService
         $base = "page_{$page}_ocr_" . time();
         $pngPath = "{$tempDir}/{$base}.png";
 
-        // استخدام إعدادات عالية الجودة لتحسين OCR
-        $cmd = "pdftoppm -f {$page} -l {$page} -png -r 300 -singlefile " .
-               escapeshellarg($pdfPath) . " " .
-               escapeshellarg("{$tempDir}/{$base}") . " 2>&1";
+        // زيادة الدقة وتحسين الإعدادات
+        $cmd = "pdftoppm -f {$page} -l {$page} -png -r 300 -aa yes -aaVector yes -singlefile " .
+            escapeshellarg($pdfPath) . " " .
+            escapeshellarg("{$tempDir}/{$base}") . " 2>&1";
 
         exec($cmd, $output, $returnVar);
 
         if (file_exists($pngPath)) {
             Log::info("High quality image created for OCR: {$pngPath}");
+
+            // تحسين الصورة باستخدام ImageMagick إذا كان متاحاً
+            $this->enhanceImageForOCR($pngPath);
+
             return $pngPath;
         } else {
             Log::error("Failed to create high quality image for page {$page}");
             return null;
+        }
+    }
+
+    /**
+     * تحسين الصورة لتحسين دقة OCR
+     */
+    private function enhanceImageForOCR($imagePath)
+    {
+        try {
+            $commands = [
+                // زيادة التباين
+                "convert {$imagePath} -contrast-stretch 0 -alpha remove {$imagePath}",
+                // تحسين الحدة
+                "convert {$imagePath} -sharpen 0x1.0 {$imagePath}",
+                // تحويل إلى أبيض وأسود
+                "convert {$imagePath} -colorspace Gray {$imagePath}"
+            ];
+
+            foreach ($commands as $cmd) {
+                exec($cmd . " 2>&1", $output, $returnVar);
+            }
+
+            Log::info("Image enhanced for OCR: {$imagePath}");
+        } catch (Exception $e) {
+            Log::warning("Image enhancement failed: " . $e->getMessage());
         }
     }
 
