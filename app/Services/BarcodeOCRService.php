@@ -124,7 +124,7 @@ class BarcodeOCRService
         ]);
 
         if ($qeedNumber) {
-            $filename = 'قيد_' . $qeedNumber;
+            $filename = $qeedNumber;
             Log::info("Found رقم القيد: {$filename}");
             return $this->sanitizeFilename($filename);
         }
@@ -137,7 +137,7 @@ class BarcodeOCRService
         ]);
 
         if ($invoiceNumber) {
-            $filename = 'فاتورة_' . $invoiceNumber;
+            $filename = $invoiceNumber;
             Log::info("Found رقم الفاتورة: {$filename}");
             return $this->sanitizeFilename($filename);
         }
@@ -150,7 +150,7 @@ class BarcodeOCRService
         ]);
 
         if ($sanedNumber) {
-            $filename = 'سند_' . $sanedNumber;
+            $filename = $sanedNumber;
             Log::info("Found رقم السند: {$filename}");
             return $this->sanitizeFilename($filename);
         }
@@ -158,13 +158,13 @@ class BarcodeOCRService
         // 4. الرابعة: البحث عن تاريخ
         $date = $this->findDate($content);
         if ($date) {
-            $filename = 'مستند_' . $date;
+            $filename = $date;
             Log::info("Found تاريخ: {$filename}");
             return $this->sanitizeFilename($filename);
         }
 
         // 5. الخيار الأخير: اسم وصفي مع الباركود
-        $filename = 'مستند_' . $barcode . '_' . ($index + 1);
+        $filename = $barcode . '_' . ($index + 1);
         Log::info("Using fallback filename: {$filename}");
         return $this->sanitizeFilename($filename);
     }
