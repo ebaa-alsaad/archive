@@ -60,7 +60,7 @@ class UploadController extends Controller
         }
 
         $zip = new ZipArchive;
-        $zipFileName = 'groups_for_upload_' . $upload->id . '.zip';
+        $zipFileName = 'groups_for_' . $upload->original_filename . '.zip';
         
         // المسار المؤقت لملف ZIP
         $tempPath = storage_path('app/temp/' . $zipFileName);
