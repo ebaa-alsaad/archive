@@ -70,23 +70,48 @@
 
 
     {{-- قسم المجموعات الناتجة --}}
+
     <div class="bg-white rounded-[24px] shadow-3xl shadow-gray-200/50 p-10 border border-gray-100">
-        <h3 class="text-2xl font-extrabold text-gray-800 mb-8 border-b pb-4 flex items-center">
-            <i class="fa-solid fa-layer-group text-teal-600 ml-2"></i> المجموعات الناتجة عن تقسيم الملف
-        </h3>
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 border-b pb-4">
+            <h3 class="text-2xl font-extrabold text-gray-800 flex items-center mb-4 md:mb-0">
+                <i class="fa-solid fa-layer-group text-teal-600 ml-2"></i> المجموعات الناتجة عن تقسيم الملف
+            </h3>
+
+            {{-- 🏆 التعديل 1: زر تحميل الكل (ZIP) --}}
+            @if ($upload->groups->isNotEmpty() && $upload->status == 'completed')
+                <a href="{{ route('uploads.download_all_groups', $upload->id) }}"
+                   class="inline-flex items-center text-white bg-green-600 hover:bg-green-700 px-5 py-3 rounded-xl text-base font-bold transition shadow-lg transform hover:scale-[1.02]">
+                    <i class="fa-solid fa-file-archive ml-2 text-lg"></i> تحميل كل المجموعات (ZIP)
+                </a>
+            @elseif ($upload->status == 'processing')
+                <span class="inline-flex items-center text-yellow-700 bg-yellow-100 px-4 py-2 rounded-xl text-sm font-bold shadow-md">
+                    التحميل متاح بعد انتهاء المعالجة
+                </span>
+            @endif
+        </div>
 
         <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
             @forelse ($upload->groups as $group)
-                {{-- استخدام تصميم بديل لمكون x-group-card لجعله عصرياً وموحداً --}}
                 <div class="bg-teal-50 p-6 rounded-xl border-2 border-teal-300 shadow-lg transition duration-300 hover:shadow-xl hover:bg-teal-100">
                     <div class="flex items-center justify-between mb-3">
-                         <p class="text-lg font-bold text-teal-800 flex items-center">
+                        <p class="text-lg font-bold text-teal-800 flex items-center">
                             <i class="fa-solid fa-tag ml-2 text-xl"></i> المجموعة رقم {{ $group->id }}
                         </p>
                         <span class="text-xs font-semibold text-teal-600 bg-white rounded-full px-3 py-1 shadow-sm">
-                             {{ $group->pages_count ?? 'عدد الصفحات غير متوفر' }} صفحة
+                            {{ $group->pages_count ?? 'عدد الصفحات غير متوفر' }} صفحة
                         </span>
                     </div>
+                    
+                    {{-- 🏆 التعديل 2: عرض اسم الملف الناتج --}}
+                    @if($group->pdf_path)
+                    <p class="text-sm text-gray-700 mb-2 font-medium">
+                        <i class="fa-solid fa-file-pdf ml-1 text-red-600"></i> اسم الملف الناتج:
+                    </p>
+                    <span class="font-mono bg-teal-200 text-teal-800 px-2 py-1 rounded-md text-sm block mt-1 mb-4 break-all">
+                        {{ basename($group->pdf_path) }}
+                    </span>
+                    @endif
+
 
                     <p class="text-sm text-gray-600 mb-4">
                         تم إنشاء هذه المجموعة بناءً على الباركود:

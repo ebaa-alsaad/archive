@@ -7,6 +7,8 @@ use App\Models\{Upload, Group};
 use App\Services\BarcodeOCRService;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use ZipArchive;
+use Illuminate\Support\Facades\File;
 
 class UploadController extends Controller
 {
@@ -47,6 +49,59 @@ class UploadController extends Controller
         }
 
         return Storage::disk($disk)->response($path);
+    }
+
+     // الدالة الجديدة لتحميل كل الملفات الناتجة كملف ZIP
+    public function downloadAllGroupsZip(Upload $upload)
+    {
+        // 1. التحقق من حالة المعالجة ووجود مجموعات
+        if ($upload->status !== 'completed' || $upload->groups->isEmpty()) {
+            return redirect()->back()->with('error', 'لا يمكن تحميل ملف ZIP. الملف غير مكتمل المعالجة أو لا يحتوي على مجموعات.');
+        }
+
+        $zip = new ZipArchive;
+        $zipFileName = 'groups_for_upload_' . $upload->id . '.zip';
+        
+        // المسار المؤقت لملف ZIP
+        $tempPath = storage_path('app/temp/' . $zipFileName);
+
+        // إنشاء دليل مؤقت إذا لم يكن موجوداً
+        if (!File::isDirectory(storage_path('app/temp'))) {
+            File::makeDirectory(storage_path('app/temp'), 0755, true);
+        }
+
+        if ($zip->open($tempPath, ZipArchive::CREATE | ZipArchive::OVERWRITE) === TRUE) {
+            
+            $errors = [];
+            
+            // إضافة كل ملف PDF ناتج إلى ملف ZIP
+            foreach ($upload->groups as $group) {
+                if ($group->pdf_path && Storage::exists($group->pdf_path)) {
+                    // يجب قراءة محتوى الملفات من الـ Storage
+                    $fileContents = Storage::get($group->pdf_path);
+                    
+                    // استخدام اسم الملف الناتج كما هو محفوظ
+                    $zip->addFromString(basename($group->pdf_path), $fileContents);
+                } else {
+                    $errors[] = $group->code;
+                }
+            }
+
+            $zip->close();
+            
+            // إذا كانت هناك أخطاء، قم بتسجيلها
+            if (!empty($errors)) {
+                Log::warning('Some group files were missing during ZIP creation.', ['upload_id' => $upload->id, 'missing_groups' => $errors]);
+            }
+            
+            // إرسال ملف ZIP للمستخدم
+            if (File::exists($tempPath)) {
+                $response = response()->download($tempPath, $zipFileName)->deleteFileAfterSend(true);
+                return $response;
+            }
+        }
+        
+        return redirect()->back()->with('error', 'حدث خطأ أثناء إنشاء ملف ZIP.');
     }
 
     public function store(Request $request)
