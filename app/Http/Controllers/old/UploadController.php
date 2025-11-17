@@ -11,10 +11,12 @@ use Illuminate\Support\Facades\Storage;
 class UploadController extends Controller
 {
     protected $barcodeService;
+    protected $BarcodeOCRService;
 
-    public function __construct(BarcodeOCRService $barcodeService)
+    public function __construct(BarcodeOCRService $barcodeService, BarcodeOCRService $BarcodeOCRService)
     {
         $this->barcodeService = $barcodeService;
+        $this->BarcodeOCRService = $BarcodeOCRService;
     }
 
     public function index()
@@ -40,17 +42,24 @@ class UploadController extends Controller
     public function showFile(Upload $upload)
     {
         $path = $upload->stored_filename;
-        $disk = 'private';
+        $disk = 'local';
 
         if (empty($path) || !Storage::disk($disk)->exists($path)) {
             abort(404, 'الملف غير موجود أو مساره مفقود في قاعدة البيانات.');
         }
 
-        return Storage::disk($disk)->response($path);
+        /** @var \Illuminate\Contracts\Filesystem\Filesystem $diskInstance */
+        $diskInstance = Storage::disk($disk);
+
+        return $diskInstance->response($path);
     }
 
+    /**
+     * رفع ومعالجة الملف باستخدام الخدمة المناسبة للحجم
+     */
     public function store(Request $request)
     {
+        // رفع جميع الحدود لاستيعاب 70MB
         ini_set('upload_max_filesize', '70M');
         ini_set('post_max_size', '70M');
         ini_set('max_execution_time', 600);
@@ -65,19 +74,35 @@ class UploadController extends Controller
 
         try {
             $request->validate([
-                'pdf_file' => 'required|mimes:pdf|max:71680'
+                'pdf_file' => 'required|mimes:pdf|max:71680' // 70MB بالكيلوبايت
             ]);
 
             $file = $request->file('pdf_file');
             $fileSizeMB = round($file->getSize() / 1024 / 1024, 2);
 
+            Log::info('File validation passed', [
+                'name' => $file->getClientOriginalName(),
+                'size_mb' => $fileSizeMB
+            ]);
+
             $storedName = $file->store('uploads', 'private');
+            Log::info('File stored successfully', ['path' => $storedName]);
+
             $fullPath = Storage::disk('private')->path($storedName);
+            Log::info('File storage verification', [
+                'stored_name' => $storedName,
+                'full_path' => $fullPath,
+                'file_exists' => file_exists($fullPath),
+                'file_size' => file_exists($fullPath) ? filesize($fullPath) : 0
+            ]);
 
-            // الحصول على عدد الصفحات
-            $pageCount = $this->barcodeService->getPdfPageCount($fullPath);
+            // اختيار الخدمة المناسبة بناءً على حجم الملف
+            $service = $this->selectService($fileSizeMB);
 
-            // إنشاء سجل الرفع
+            $pageCount = $service->getPageCount($fullPath);
+            Log::info('PDF page count determined', ['total_pages' => $pageCount]);
+
+            // إنشاء سجل الرفع مع عدد الصفحات
             $upload = Upload::create([
                 'original_filename' => $file->getClientOriginalName(),
                 'stored_filename' => $storedName,
@@ -87,8 +112,10 @@ class UploadController extends Controller
                 'user_id' => auth()->id(),
             ]);
 
-            // معالجة PDF وتقسيم الأقسام
-            $groups = $this->barcodeService->processPdf($upload);
+            Log::info('Upload record created', ['upload_id' => $upload->id]);
+
+            // المعالجة باستخدام الخدمة المختارة
+            $groups = $service->processPdf($upload);
 
             // تحديث حالة الرفع
             $upload->update([
@@ -96,31 +123,35 @@ class UploadController extends Controller
                 'error_message' => null
             ]);
 
+            // معالجة المجموعات
             $barcodes = [];
-            foreach ($groups as $group) {
-                if ($group instanceof Group && !empty($group->code)) {
-                    $barcodes[] = $group->code;
+            if (!empty($groups) && is_array($groups)) {
+                foreach ($groups as $group) {
+                    if ($group instanceof Group && !empty($group->code)) {
+                        $barcodes[] = $group->code;
+                    }
                 }
             }
 
             Log::info('Processing completed successfully', [
-                'sections_created' => count($groups),
+                'barcodes_found' => count($barcodes),
                 'barcodes' => $barcodes,
-                'service_used' => get_class($this->barcodeService)
+                'service_used' => get_class($service)
             ]);
 
             return response()->json([
                 'success' => true,
-                'message' => "تمت معالجة الملف بنجاح ({$fileSizeMB} MB). تم إنشاء " . count($groups) . " قسم.",
+                'message' => "تمت معالجة الملف بنجاح ({$fileSizeMB} MB). تم العثور على " . count($barcodes) . " باركود",
                 'barcodes' => $barcodes,
                 'upload_id' => $upload->id,
-                'service_used' => get_class($this->barcodeService),
+                'service_used' => get_class($service),
                 'redirect_url' => route('uploads.show', $upload)
             ]);
 
         } catch (\Exception $e) {
             Log::error('Upload processing failed', [
                 'error_message' => $e->getMessage(),
+                'file_size' => $request->file('pdf_file')?->getSize(),
                 'trace' => $e->getTraceAsString()
             ]);
 
@@ -138,12 +169,30 @@ class UploadController extends Controller
         }
     }
 
+    /**
+     * اختيار الخدمة المناسبة بناءً على حجم الملف
+     */
+    private function selectService($fileSizeMB)
+    {
+        // للملفات الصغيرة (<10MB) استخدم الخدمة العادية
+        if ($fileSizeMB < 10) {
+            Log::info("Using standard BarcodeOCRService for small file: {$fileSizeMB}MB");
+            return $this->barcodeService;
+        }
+
+        // للملفات الكبيرة (>10MB) استخدم الخدمة المتقدمة
+        Log::info("Using BarcodeOCRService for large file: {$fileSizeMB}MB");
+        return $this->BarcodeOCRService;
+    }
+
     public function destroy(Upload $upload)
     {
+        // حذف الملفات المرتبطة
         if ($upload->stored_filename) {
             Storage::disk('private')->delete($upload->stored_filename);
         }
 
+        // حذف المجموعات المرتبطة
         $upload->groups()->each(function($group) {
             if ($group->pdf_path && Storage::exists($group->pdf_path)) {
                 Storage::delete($group->pdf_path);

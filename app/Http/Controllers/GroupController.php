@@ -41,7 +41,7 @@ class GroupController extends Controller
 
     public function download(Group $group)
     {
-        $absolute = storage_path('app/' . $group->pdf_path);
+        $absolute = storage_path('app/private/' . $group->pdf_path);
 
         if (!file_exists($absolute)) {
             abort(404, "الملف غير موجود: $absolute");
