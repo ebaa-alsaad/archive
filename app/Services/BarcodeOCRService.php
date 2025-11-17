@@ -111,86 +111,102 @@ class BarcodeOCRService
         $firstPage = $pages[0];
         $content = $this->extractTextWithOCR($pdfPath, $firstPage);
 
-        Log::info("OCR extracted content from page {$firstPage}: " . $content);
+        Log::info("🔍 OCR extracted content from page {$firstPage}: " . $content);
 
-        // 1. البحث عن رقم القيد بأنماط مختلفة
-        $qeedPatterns = [
-            '/رقم\s*القيد\s*[:\-]?\s*(\d+)/u',
-            '/القيد\s*[:\-]?\s*(\d+)/u',
-            '/قيد\s*[:\-]?\s*(\d+)/u',
-            '/رقم\s*[:\-]?\s*(\d+).*قيد/u',
-            '/(\b77\d{2}\b)/u' // بحث عن 77xx بشكل خاص
-        ];
+        // 1. الأولوية: البحث عن رقم القيد
+        $qeedNumber = $this->findDocumentNumber($content, 'قيد', [
+            'رقم\s*القيد\s*[:\-]?\s*(\d+)',
+            'القيد\s*[:\-]?\s*(\d+)',
+            'قيد\s*[:\-]?\s*(\d+)',
+            'رقم\s*[:\-]?\s*(\d+).*قيد'
+        ]);
 
-        foreach ($qeedPatterns as $pattern) {
-            if (preg_match($pattern, $content, $matches)) {
-                $filename = 'قيد_' . $matches[1];
-                Log::info("Found رقم القيد via OCR: {$filename} - Pattern: {$pattern}");
-                return $this->sanitizeFilename($filename);
-            }
+        if ($qeedNumber) {
+            $filename = 'قيد_' . $qeedNumber;
+            Log::info("✅ Found رقم القيد: {$filename}");
+            return $this->sanitizeFilename($filename);
         }
 
-        // 2. البحث عن التاريخ بأنماط مختلفة
-        $datePatterns = [
-            '/(\d{2}\/\d{2}\/\d{4})/u', // 03/10/2023
-            '/(\d{2}-\d{2}-\d{4})/u',   // 03-10-2023
-            '/(\d{1,2}\/\d{1,2}\/\d{4})/u', // 3/10/2023
-            '/(\d{4}-\d{2}-\d{2})/u',   // 2023-10-03
-            '/(\d{1,2}\s*\/\s*\d{1,2}\s*\/\s*\d{4})/u' // 03 / 10 / 2023
-        ];
+        // 2. الثانية: البحث عن رقم الفاتورة
+        $invoiceNumber = $this->findDocumentNumber($content, 'فاتورة', [
+            'رقم\s*الفاتورة\s*[:\-]?\s*(\d+)',
+            'الفاتورة\s*[:\-]?\s*(\d+)',
+            'فاتورة\s*[:\-]?\s*(\d+)',
+            'Invoice\s*No\.?\s*:?\s*(\d+)'
+        ]);
 
-        foreach ($datePatterns as $pattern) {
-            if (preg_match($pattern, $content, $matches)) {
-                $date = preg_replace('/\s+/', '', $matches[1]); // إزالة المسافات
-                $cleanDate = str_replace('/', '-', $date);
-                $filename = 'مستند_' . $cleanDate;
-                Log::info("Found تاريخ via OCR: {$filename} - Pattern: {$pattern}");
-                return $this->sanitizeFilename($filename);
-            }
+        if ($invoiceNumber) {
+            $filename = 'فاتورة_' . $invoiceNumber;
+            Log::info("✅ Found رقم الفاتورة: {$filename}");
+            return $this->sanitizeFilename($filename);
         }
 
-        // 3. البحث عن أي أرقام مهمة
-        if (preg_match('/(\b\d{4,5}\b)/u', $content, $matches)) {
-            $number = $matches[1];
-            // تجاهل الأرقام التي تبدو كسنوات (مثل 2020, 2023)
-            if (!in_array($number, ['2020', '2021', '2022', '2023', '2024', '2025'])) {
-                $filename = 'مستند_' . $number;
-                Log::info("Found general number via OCR: {$filename}");
-                return $this->sanitizeFilename($filename);
-            }
+        // 3. الثالثة: البحث عن رقم السند
+        $sanedNumber = $this->findDocumentNumber($content, 'سند', [
+            'رقم\s*السند\s*[:\-]?\s*(\d+)',
+            'السند\s*[:\-]?\s*(\d+)',
+            'سند\s*[:\-]?\s*(\d+)'
+        ]);
+
+        if ($sanedNumber) {
+            $filename = 'سند_' . $sanedNumber;
+            Log::info("✅ Found رقم السند: {$filename}");
+            return $this->sanitizeFilename($filename);
         }
 
-        // 4. استخدام أسماء وصفيّة بناءً على محتوى الصفحة
-        $descriptiveName = $this->getDescriptiveNameFromContent($content, $index, $barcode);
-        Log::info("Using descriptive name: {$descriptiveName}");
-        return $this->sanitizeFilename($descriptiveName);
+        // 4. الرابعة: البحث عن تاريخ
+        $date = $this->findDate($content);
+        if ($date) {
+            $filename = 'مستند_' . $date;
+            Log::info("✅ Found تاريخ: {$filename}");
+            return $this->sanitizeFilename($filename);
+        }
+
+        // 5. الخيار الأخير: اسم وصفي مع الباركود
+        $filename = 'مستند_' . $barcode . '_' . ($index + 1);
+        Log::info("📝 Using fallback filename: {$filename}");
+        return $this->sanitizeFilename($filename);
     }
 
     /**
-     * إنشاء اسم وصفي بناءً على محتوى النص
+     * البحث الديناميكي عن أرقام المستندات
      */
-    private function getDescriptiveNameFromContent($content, $index, $barcode)
+    private function findDocumentNumber($content, $documentType, $patterns)
     {
-        // البحث عن كلمات مفتاحية في المحتوى
-        $keywords = [
-            'كشف حساب' => 'كشف_حساب',
-            'تقرير' => 'تقرير',
-            'فاتورة' => 'فاتورة',
-            'سند' => 'سند',
-            'قيد' => 'قيد',
-            'حركة' => 'حركة',
-            'مصروفات' => 'مصروفات',
-            'شركة' => 'شركة'
-        ];
-
-        foreach ($keywords as $arabic => $filenamePart) {
-            if (strpos($content, $arabic) !== false) {
-                return $filenamePart . '_' . $barcode . '_' . ($index + 1);
+        foreach ($patterns as $pattern) {
+            $fullPattern = '/' . $pattern . '/ui';
+            if (preg_match($fullPattern, $content, $matches)) {
+                $number = $matches[1];
+                Log::info("🎯 Found {$documentType} pattern: {$pattern} -> {$number}");
+                return $number;
             }
         }
 
-        // إذا لم يوجد شيء، استخدام التاريخ الحالي
-        return 'مستند_' . date('Y-m-d') . '_' . ($index + 1);
+        return null;
+    }
+
+    /**
+     * البحث عن التاريخ
+     */
+    private function findDate($content)
+    {
+        $patterns = [
+            '/(\d{2}\/\d{2}\/\d{4})/u',
+            '/(\d{2}-\d{2}-\d{4})/u',
+            '/(\d{4}-\d{2}-\d{2})/u',
+            '/(\d{1,2}\s*\/\s*\d{1,2}\s*\/\s*\d{4})/u'
+        ];
+
+        foreach ($patterns as $pattern) {
+            if (preg_match($pattern, $content, $matches)) {
+                $date = preg_replace('/\s+/', '', $matches[1]);
+                $cleanDate = str_replace('/', '-', $date);
+                Log::info("🎯 Found date pattern: {$pattern} -> {$cleanDate}");
+                return $cleanDate;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -205,12 +221,12 @@ class BarcodeOCRService
             $tempDir = storage_path("app/temp");
             $outputFile = $tempDir . "/ocr_output_" . time();
 
-            // تجربة إعدادات Tesseract مختلفة
+            // إعدادات Tesseract محسنة للعربية
             $tesseractConfigs = [
-                "-l ara+eng --psm 6 -c tessedit_char_whitelist=0123456789/:-", // للتواريخ والأرقام
-                "-l ara+eng --psm 4", // للكتلة الواحدة
-                "-l ara+eng --psm 3", // تلقائي
-                "-l ara+eng --psm 6"  // كتلة موحدة
+                "-l ara --psm 6 --oem 3",
+                "-l ara+eng --psm 4 --oem 3",
+                "-l ara --psm 3 --oem 3",
+                "-l ara+eng --psm 6 --oem 3"
             ];
 
             $bestContent = '';
@@ -220,7 +236,6 @@ class BarcodeOCRService
                 $cmd = "tesseract " . escapeshellarg($imagePath) . " " .
                     escapeshellarg($outputFile) . " {$config} 2>&1";
 
-                Log::info("Running OCR with config: {$config}");
                 exec($cmd, $output, $returnVar);
 
                 if (file_exists($outputFile . '.txt')) {
@@ -228,7 +243,6 @@ class BarcodeOCRService
                     $content = preg_replace('/\s+/', ' ', $content);
                     $content = trim($content);
 
-                    // اختيار المحتوى الأفضل (الأطول)
                     if (strlen($content) > $bestLength) {
                         $bestContent = $content;
                         $bestLength = strlen($content);
@@ -238,7 +252,7 @@ class BarcodeOCRService
                 }
             }
 
-            Log::info("Best OCR content for page {$page}, length: " . $bestLength);
+            Log::info("Best OCR content for page {$page}, length: " . strlen($bestContent));
 
             @unlink($imagePath);
             return $bestContent;
@@ -260,8 +274,7 @@ class BarcodeOCRService
         $base = "page_{$page}_ocr_" . time();
         $pngPath = "{$tempDir}/{$base}.png";
 
-        // زيادة الدقة وتحسين الإعدادات
-        $cmd = "pdftoppm -f {$page} -l {$page} -png -r 300 -aa yes -aaVector yes -singlefile " .
+        $cmd = "pdftoppm -f {$page} -l {$page} -png -r 300 -gray -singlefile " .
             escapeshellarg($pdfPath) . " " .
             escapeshellarg("{$tempDir}/{$base}") . " 2>&1";
 
@@ -269,39 +282,10 @@ class BarcodeOCRService
 
         if (file_exists($pngPath)) {
             Log::info("High quality image created for OCR: {$pngPath}");
-
-            // تحسين الصورة باستخدام ImageMagick إذا كان متاحاً
-            $this->enhanceImageForOCR($pngPath);
-
             return $pngPath;
         } else {
             Log::error("Failed to create high quality image for page {$page}");
             return null;
-        }
-    }
-
-    /**
-     * تحسين الصورة لتحسين دقة OCR
-     */
-    private function enhanceImageForOCR($imagePath)
-    {
-        try {
-            $commands = [
-                // زيادة التباين
-                "convert {$imagePath} -contrast-stretch 0 -alpha remove {$imagePath}",
-                // تحسين الحدة
-                "convert {$imagePath} -sharpen 0x1.0 {$imagePath}",
-                // تحويل إلى أبيض وأسود
-                "convert {$imagePath} -colorspace Gray {$imagePath}"
-            ];
-
-            foreach ($commands as $cmd) {
-                exec($cmd . " 2>&1", $output, $returnVar);
-            }
-
-            Log::info("Image enhanced for OCR: {$imagePath}");
-        } catch (Exception $e) {
-            Log::warning("Image enhancement failed: " . $e->getMessage());
         }
     }
 
