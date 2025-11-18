@@ -20,7 +20,7 @@ class BarcodeOCRService
      */
     public function processPdf($upload)
     {
-        // موارد أعلى قليلاً لملفات كبيرة — عدّل حسب سيرفرك
+        // موارد أعلى لملفات كبيرة
         set_time_limit(1200);
         ini_set('memory_limit', '1024M');
 
@@ -35,7 +35,6 @@ class BarcodeOCRService
 
         $pageCount = $this->getPdfPageCount($pdfPath);
 
-        // Log أقل: استخدم info مرة واحدة فقط خارج الحلقات
         Log::info("Processing PDF", ['path' => $pdfPath, 'pages' => $pageCount]);
 
         // قراءة باركود الفاصل من الصفحة الأولى (يستخدم الكاش)
@@ -127,9 +126,6 @@ class BarcodeOCRService
         ) {
             $content = $this->extractTextWithOCR($pdfPath, $firstPage);
         }
-
-        // سجل مقتضب فقط (debug). الإنتاج: ضع LOG_LEVEL لرفع مستوى التحذيرات فقط
-        Log::debug("Extracted content snippet", ['page' => $firstPage, 'snippet' => mb_substr($content, 0, 200)]);
 
         // 1. البحث عن رقم القيد
         $qeedNumber = $this->findDocumentNumber($content, 'قيد', [
@@ -242,9 +238,6 @@ class BarcodeOCRService
         }
     }
 
-    /**
-     * هل النص يشبه Garbage (محرف)؟
-     */
     private function looksLikeGarbled($content)
     {
         if (empty($content)) return true;
@@ -254,9 +247,6 @@ class BarcodeOCRService
         return isset($m[0]) && count($m[0]) > 20;
     }
 
-    /**
-     * هل يوجد الكثير من النص الإنجليزي الطويل في مستند عربي؟
-     */
     private function tooManyNonArabic($content)
     {
         if (empty($content)) return false;

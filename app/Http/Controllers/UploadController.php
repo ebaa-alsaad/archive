@@ -158,11 +158,7 @@ class UploadController extends Controller
                 }
             }
 
-            Log::info('Processing completed successfully', [
-                'sections_created' => count($groups),
-                'barcodes' => $barcodes,
-                'service_used' => get_class($this->barcodeService)
-            ]);
+            Log::info('Processing completed successfully');
 
             return response()->json([
                 'success' => true,
