@@ -9,6 +9,10 @@ use Illuminate\Support\Facades\Storage;
 
 class BarcodeOCRService
 {
+    private $imageCache = [];
+    private $barcodeCache = [];
+    private $textCache = [];
+
     /**
      * المعالجة الرئيسية للملف
      */
@@ -109,7 +113,8 @@ class BarcodeOCRService
         $content = $this->extractWithPdftotext($pdfPath, $firstPage);
         
         // إذا لم يحصل على محتوى جيد، استخدم OCR
-        if (empty($content) || strlen($content) < 50) {
+        if (empty($content) || strlen($content) < 40) {
+        // النص ضعيف → استخدم OCR
             $content = $this->extractTextWithOCR($pdfPath, $firstPage);
         }
 
@@ -174,24 +179,35 @@ class BarcodeOCRService
      */
     private function extractWithPdftotext($pdfPath, $page)
     {
-        $tempDir = storage_path("app/temp");
-        $tempFile = $tempDir . "/pdftotext_" . time() . ".txt";
+        if (isset($this->textCache[$page])) {
+            return $this->textCache[$page];
+        }
 
-        $cmd = "pdftotext -f {$page} -l {$page} -layout " . 
-               escapeshellarg($pdfPath) . " " . escapeshellarg($tempFile) . " 2>&1";
-        
-        exec($cmd, $output, $returnVar);
+        $tempDir = storage_path("app/temp");
+        $tempFile = $tempDir . "/pdftxt_" . md5($pdfPath . $page) . ".txt";
+
+        // لو ملف النص موجود مسبقاً
+        if (file_exists($tempFile)) {
+            return $this->textCache[$page] = trim(
+                preg_replace('/\s+/', ' ', file_get_contents($tempFile))
+            );
+        }
+
+        $cmd = "pdftotext -f {$page} -l {$page} -layout " .
+            escapeshellarg($pdfPath) . " " . escapeshellarg($tempFile) . " 2>&1";
+
+        exec($cmd);
 
         $content = '';
         if (file_exists($tempFile)) {
             $content = file_get_contents($tempFile);
             $content = preg_replace('/\s+/', ' ', $content);
             $content = trim($content);
-            @unlink($tempFile);
         }
 
-        return $content;
+        return $this->textCache[$page] = $content;
     }
+
 
     /**
      * استخراج النص باستخدام OCR (للحالات الصعبة فقط)
@@ -304,38 +320,58 @@ class BarcodeOCRService
      */
     private function convertToImage($pdfPath, $page)
     {
+        if (isset($this->imageCache[$page])) {
+            return $this->imageCache[$page];
+        }
+
         $tempDir = storage_path("app/temp");
         if (!file_exists($tempDir)) mkdir($tempDir, 0775, true);
 
-        $base = "page_{$page}_" . time();
+        $base = "page_{$page}_" . md5($pdfPath);
         $pngPath = "{$tempDir}/{$base}.png";
 
+        // إذا الصورة موجودة من قبل لا تعيد تحويلها
+        if (file_exists($pngPath)) {
+            return $this->imageCache[$page] = $pngPath;
+        }
+
         $cmd = "pdftoppm -f {$page} -l {$page} -png -singlefile " .
-               escapeshellarg($pdfPath) . " " .
-               escapeshellarg("{$tempDir}/{$base}") . " 2>&1";
+            escapeshellarg($pdfPath) . " " .
+            escapeshellarg("{$tempDir}/{$base}") . " 2>&1";
+
         exec($cmd);
 
-        return file_exists($pngPath) ? $pngPath : null;
+        if (file_exists($pngPath)) {
+            return $this->imageCache[$page] = $pngPath;
+        }
+
+        return null;
     }
+
 
     /**
      * قراءة الباركود من صفحة PDF
      */
     private function readPageBarcode($pdfPath, $page)
     {
+        if (isset($this->barcodeCache[$page])) {
+            return $this->barcodeCache[$page];
+        }
+
         try {
             $imagePath = $this->convertToImage($pdfPath, $page);
             if (!$imagePath) return null;
 
             $barcode = $this->scanBarcode($imagePath);
-            @unlink($imagePath);
 
-            return $barcode;
+            return $this->barcodeCache[$page] = $barcode;
+
         } catch (Exception $e) {
             Log::error("Barcode reading failed for page {$page}: " . $e->getMessage());
             return null;
         }
     }
+
 
     /**
      * مسح الباركود من الصورة
