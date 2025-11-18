@@ -12,7 +12,6 @@ class BarcodeOCRService
     private $imageCache = [];
     private $barcodeCache = [];
     private $textCache = [];
-    private $ocrCache = [];
 
     /**
      * المعالجة الرئيسية للملف
@@ -20,7 +19,7 @@ class BarcodeOCRService
     public function processPdf($upload)
     {
         set_time_limit(600);
-        ini_set('memory_limit', '1024M'); // رفعت شوي للسلامة مع ملفات كبيرة
+        ini_set('memory_limit', '512M');
 
         $pdfPath = Storage::disk('private')->path($upload->stored_filename);
 
@@ -31,7 +30,7 @@ class BarcodeOCRService
         $pageCount = $this->getPdfPageCount($pdfPath);
         Log::info("Processing PDF with {$pageCount} pages");
 
-        // قراءة الباركود من الصفحة الأولى (separator) — استخدم الكاش داخل الدالة
+        // قراءة الباركود من الصفحة الأولى فقط
         $separatorBarcode = $this->readPageBarcode($pdfPath, 1) ?? 'default_barcode';
         Log::info("Using separator barcode: {$separatorBarcode}");
 
@@ -75,7 +74,7 @@ class BarcodeOCRService
             $outputPath = "{$fullDir}/{$filenameSafe}";
             $dbPath = "{$directory}/{$filenameSafe}";
 
-            // استخدام طريقة سريعة لإنشاء PDF (ghostscript مع ضبط)
+            // استخدام طريقة سريعة لإنشاء PDF
             $pdfCreated = $this->createQuickPdf($pdfPath, $pages, $outputPath);
 
             if ($pdfCreated) {
@@ -109,22 +108,17 @@ class BarcodeOCRService
     private function generateFilenameWithOCR($pdfPath, $pages, $index, $barcode)
     {
         $firstPage = $pages[0];
-
-        // استخدام pdftotext أولاً لأنه أسرع (مع كاش داخلي)
+        
+        // استخدام pdftotext أولاً لأنه أسرع
         $content = $this->extractWithPdftotext($pdfPath, $firstPage);
-
-        // قرار ذكي عن تشغيل OCR: ليس فقط طول النص بل بعض علامات التحريف
-        if (
-            empty($content) ||
-            mb_strlen($content) < 40 ||
-            preg_match('/[a-zA-Z]{20,}/', $content) || // سلسلة إنجليزية طويلة مش منطقية بالعربية
-            $this->looksLikeGarbled($content)
-        ) {
-            // النص ضعيف أو محرف → استخدم OCR فقط عند الحاجة
+        
+        // إذا لم يحصل على محتوى جيد، استخدم OCR
+        if (empty($content) || strlen($content) < 40) {
+        // النص ضعيف → استخدم OCR
             $content = $this->extractTextWithOCR($pdfPath, $firstPage);
         }
 
-        Log::debug("Extracted content snippet (page {$firstPage}): " . mb_substr($content, 0, 200));
+        Log::info("Extracted content from page {$firstPage}: " . substr($content, 0, 200));
 
         // 1. الأولوية: البحث عن رقم القيد
         $qeedNumber = $this->findDocumentNumber($content, 'قيد', [
@@ -135,8 +129,9 @@ class BarcodeOCRService
         ]);
 
         if ($qeedNumber) {
-            Log::info("Found رقم القيد: {$qeedNumber}");
-            return $this->sanitizeFilename($qeedNumber);
+            $filename = $qeedNumber;
+            Log::info("Found رقم القيد: {$filename}");
+            return $this->sanitizeFilename($filename);
         }
 
         // 2. الثانية: البحث عن رقم الفاتورة
@@ -147,8 +142,9 @@ class BarcodeOCRService
         ]);
 
         if ($invoiceNumber) {
-            Log::info("Found رقم الفاتورة: {$invoiceNumber}");
-            return $this->sanitizeFilename($invoiceNumber);
+            $filename = $invoiceNumber;
+            Log::info("Found رقم الفاتورة: {$filename}");
+            return $this->sanitizeFilename($filename);
         }
 
         // 3. الثالثة: البحث عن رقم السند
@@ -159,15 +155,17 @@ class BarcodeOCRService
         ]);
 
         if ($sanedNumber) {
-            Log::info("Found رقم السند: {$sanedNumber}");
-            return $this->sanitizeFilename($sanedNumber);
+            $filename = $sanedNumber;
+            Log::info("Found رقم السند: {$filename}");
+            return $this->sanitizeFilename($filename);
         }
 
         // 4. الرابعة: البحث عن تاريخ
         $date = $this->findDate($content);
         if ($date) {
-            Log::info("Found تاريخ: {$date}");
-            return $this->sanitizeFilename($date);
+            $filename = $date;
+            Log::info("Found تاريخ: {$filename}");
+            return $this->sanitizeFilename($filename);
         }
 
         // 5. الخيار الأخير: اسم وصفي مع الباركود
@@ -177,25 +175,22 @@ class BarcodeOCRService
     }
 
     /**
-     * استخراج النص باستخدام pdftotext (أسرع) مع كاش على القرص والذاكرة
+     * استخراج النص باستخدام pdftotext (أسرع)
      */
     private function extractWithPdftotext($pdfPath, $page)
     {
-        // كاش بالذاكرة
-        $cacheKey = md5($pdfPath . '::' . $page);
-        if (isset($this->textCache[$cacheKey])) {
-            return $this->textCache[$cacheKey];
+        if (isset($this->textCache[$page])) {
+            return $this->textCache[$page];
         }
 
         $tempDir = storage_path("app/temp");
-        if (!file_exists($tempDir)) mkdir($tempDir, 0775, true);
+        $tempFile = $tempDir . "/pdftxt_" . md5($pdfPath . $page) . ".txt";
 
-        $tempFile = $tempDir . "/pdftxt_" . $cacheKey . ".txt";
-
-        // لو ملف النص موجود مسبقاً على القرص — استرجاع سريع
+        // لو ملف النص موجود مسبقاً
         if (file_exists($tempFile)) {
-            $content = trim(preg_replace('/\s+/u', ' ', file_get_contents($tempFile)));
-            return $this->textCache[$cacheKey] = $content;
+            return $this->textCache[$page] = trim(
+                preg_replace('/\s+/', ' ', file_get_contents($tempFile))
+            );
         }
 
         $cmd = "pdftotext -f {$page} -l {$page} -layout " .
@@ -205,71 +200,48 @@ class BarcodeOCRService
 
         $content = '';
         if (file_exists($tempFile)) {
-            $content = trim(preg_replace('/\s+/u', ' ', file_get_contents($tempFile)));
+            $content = file_get_contents($tempFile);
+            $content = preg_replace('/\s+/', ' ', $content);
+            $content = trim($content);
         }
 
-        // خزّنه في الذاكرة
-        return $this->textCache[$cacheKey] = $content;
+        return $this->textCache[$page] = $content;
     }
 
+
     /**
-     * استخراج النص باستخدام OCR (للحالات الصعبة فقط) + كاش
+     * استخراج النص باستخدام OCR (للحالات الصعبة فقط)
      */
     private function extractTextWithOCR($pdfPath, $page)
     {
-        $cacheKey = md5($pdfPath . '::ocr::' . $page);
-        if (isset($this->ocrCache[$cacheKey])) {
-            return $this->ocrCache[$cacheKey];
-        }
-
         try {
             $imagePath = $this->convertToImage($pdfPath, $page);
-            if (!$imagePath) return $this->ocrCache[$cacheKey] = '';
+            if (!$imagePath) return '';
 
             $tempDir = storage_path("app/temp");
-            if (!file_exists($tempDir)) mkdir($tempDir, 0775, true);
+            $outputFile = $tempDir . "/ocr_" . time();
 
-            $outputFileBase = $tempDir . "/ocr_" . $cacheKey;
-
-            // استخدام إعداد سريع واحد فقط (psm 6 مناسب للصفحات)
+            // استخدام إعداد سريع واحد فقط
             $cmd = "tesseract " . escapeshellarg($imagePath) . " " .
-                   escapeshellarg($outputFileBase) . " -l ara --psm 6 2>&1";
+                   escapeshellarg($outputFile) . " -l ara --psm 6 2>&1";
 
             exec($cmd, $output, $returnVar);
 
             $content = '';
-            if (file_exists($outputFileBase . '.txt')) {
-                $content = trim(preg_replace('/\s+/u', ' ', file_get_contents($outputFileBase . '.txt')));
-                @unlink($outputFileBase . '.txt');
+            if (file_exists($outputFile . '.txt')) {
+                $content = file_get_contents($outputFile . '.txt');
+                $content = preg_replace('/\s+/', ' ', $content);
+                $content = trim($content);
+                @unlink($outputFile . '.txt');
             }
 
-            // لا نحذف الصورة هنا لأننا نستفيد من كاش الصور (imageCache)
-            return $this->ocrCache[$cacheKey] = $content;
+            @unlink($imagePath);
+            return $content;
 
         } catch (Exception $e) {
             Log::error("OCR extraction failed: " . $e->getMessage());
-            return $this->ocrCache[$cacheKey] = '';
+            return '';
         }
-    }
-
-    /**
-     * نظرة سريعة إن النص يشبه "تلف" أو محرف
-     */
-    private function looksLikeGarbled($content)
-    {
-        if (empty($content)) return true;
-
-        // عدّ الحروف غير العربية/أرقام/مسافة - إن كانت كثيرة فغالباً محرف
-        if (preg_match_all('/[^\p{Arabic}\p{N}\s\p{P}]/u', $content, $m) && count($m[0]) > 20) {
-            return true;
-        }
-
-        // لو فيه سلسلة إنجليزية طويلة جداً فهذا غريب في المستند العربي
-        if (preg_match('/[a-zA-Z]{20,}/', $content)) {
-            return true;
-        }
-
-        return false;
     }
 
     /**
@@ -277,8 +249,6 @@ class BarcodeOCRService
      */
     private function findDocumentNumber($content, $documentType, $patterns)
     {
-        if (empty($content) || mb_strlen($content) < 2) return null;
-
         foreach ($patterns as $pattern) {
             $fullPattern = '/' . $pattern . '/ui';
             if (preg_match($fullPattern, $content, $matches)) {
@@ -295,8 +265,6 @@ class BarcodeOCRService
      */
     private function findDate($content)
     {
-        if (empty($content) || mb_strlen($content) < 4) return null;
-
         $patterns = [
             '/(\d{2}\/\d{2}\/\d{4})/u',
             '/(\d{2}-\d{2}-\d{4})/u',
@@ -320,18 +288,16 @@ class BarcodeOCRService
         try {
             $firstPage = min($pages);
             $lastPage = max($pages);
-
-            // استخدم PDFSETTINGS مناسب لجودة عالية واستقرار
+            
             $cmd = "gs -q -dNOPAUSE -dBATCH -sDEVICE=pdfwrite " .
-                   "-dCompatibilityLevel=1.7 -dPDFSETTINGS=/prepress " .
                    "-dFirstPage={$firstPage} -dLastPage={$lastPage} " .
                    "-sOutputFile=" . escapeshellarg($outputPath) . " " .
                    escapeshellarg($pdfPath) . " 2>&1";
-
+            
             exec($cmd, $output, $returnVar);
-
+            
             return $returnVar === 0 && file_exists($outputPath);
-
+            
         } catch (Exception $e) {
             Log::error("Quick PDF creation failed: " . $e->getMessage());
             return false;
@@ -343,36 +309,30 @@ class BarcodeOCRService
      */
     private function sanitizeFilename($filename)
     {
-        // استبدال الأحرف الغير مرغوبة بشرطة سفلية
-        $clean = preg_replace('/[^\p{Arabic}a-zA-Z0-9\-_\.]/u', '_', $filename);
-        // إزالة تكرار الشرطات
-        $clean = preg_replace('/[_\.]{2,}/', '_', $clean);
-        // إزالة non-word من البداية والنهاية
-        $clean = preg_replace('/^[^0-9\p{Arabic}a-zA-Z]+|[^0-9\p{Arabic}a-zA-Z]+$/u', '', $clean);
-        // ضمان ألا يكون فارغاً
-        return $clean === '' ? 'file_' . time() : $clean;
+        $clean = preg_replace('/[^\p{Arabic}a-zA-Z0-9_-]/u', '_', $filename);
+        $clean = preg_replace('/_{2,}/', '_', $clean);
+        $clean = trim($clean, '_');
+        return $clean;
     }
 
     /**
-     * تحويل صفحة PDF إلى صورة PNG (مع كاش)
+     * تحويل صفحة PDF إلى صورة PNG
      */
     private function convertToImage($pdfPath, $page)
     {
-        // مفتاح الكاش مرتبط بالـ pdfPath+page
-        $cacheKey = md5($pdfPath . '::' . $page);
-        if (isset($this->imageCache[$cacheKey]) && file_exists($this->imageCache[$cacheKey])) {
-            return $this->imageCache[$cacheKey];
+        if (isset($this->imageCache[$page])) {
+            return $this->imageCache[$page];
         }
 
         $tempDir = storage_path("app/temp");
         if (!file_exists($tempDir)) mkdir($tempDir, 0775, true);
 
-        $base = "page_{$page}_" . $cacheKey;
+        $base = "page_{$page}_" . md5($pdfPath);
         $pngPath = "{$tempDir}/{$base}.png";
 
         // إذا الصورة موجودة من قبل لا تعيد تحويلها
         if (file_exists($pngPath)) {
-            return $this->imageCache[$cacheKey] = $pngPath;
+            return $this->imageCache[$page] = $pngPath;
         }
 
         $cmd = "pdftoppm -f {$page} -l {$page} -png -singlefile " .
@@ -382,35 +342,36 @@ class BarcodeOCRService
         exec($cmd);
 
         if (file_exists($pngPath)) {
-            return $this->imageCache[$cacheKey] = $pngPath;
+            return $this->imageCache[$page] = $pngPath;
         }
 
         return null;
     }
 
+
     /**
-     * قراءة الباركود من صفحة PDF (مع كاش)
+     * قراءة الباركود من صفحة PDF
      */
     private function readPageBarcode($pdfPath, $page)
     {
-        $cacheKey = md5($pdfPath . '::barcode::' . $page);
-        if (isset($this->barcodeCache[$cacheKey])) {
-            return $this->barcodeCache[$cacheKey];
+        if (isset($this->barcodeCache[$page])) {
+            return $this->barcodeCache[$page];
         }
 
         try {
             $imagePath = $this->convertToImage($pdfPath, $page);
-            if (!$imagePath) return $this->barcodeCache[$cacheKey] = null;
+            if (!$imagePath) return null;
 
             $barcode = $this->scanBarcode($imagePath);
 
-            return $this->barcodeCache[$cacheKey] = $barcode;
+            return $this->barcodeCache[$page] = $barcode;
 
         } catch (Exception $e) {
             Log::error("Barcode reading failed for page {$page}: " . $e->getMessage());
-            return $this->barcodeCache[$cacheKey] = null;
+            return null;
         }
     }
+
 
     /**
      * مسح الباركود من الصورة
@@ -421,9 +382,7 @@ class BarcodeOCRService
         exec($cmd, $output, $returnVar);
 
         if ($returnVar === 0 && !empty($output)) {
-            // ممكن zbarimg يرجع عدة أسطر، نستخدم السطر الأول
-            $first = trim(is_array($output) ? $output[0] : $output);
-            return $first === '' ? null : $first;
+            return trim($output[0]);
         }
         return null;
     }
