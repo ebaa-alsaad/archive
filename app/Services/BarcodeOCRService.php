@@ -21,8 +21,9 @@ class BarcodeOCRService
     public function processPdf($upload)
     {
         // موارد أعلى لملفات كبيرة
-        set_time_limit(1200);
-        ini_set('memory_limit', '1024M');
+        set_time_limit(1800);
+        ini_set('max_execution_time', 1800);
+        ini_set('memory_limit', '2048M');
 
         $pdfPath = Storage::disk('private')->path($upload->stored_filename);
 

@@ -32,7 +32,7 @@
                         <p class="mb-2 text-lg text-gray-600 font-semibold">
                             <span class="font-extrabold text-blue-700">اسحب وأفلت ملف PDF</span> أو انقر للتحميل
                         </p>
-                        <p class="text-sm text-gray-400">ملفات PDF فقط | الحد الأقصى 70MB</p>
+                        <p class="text-sm text-gray-400">ملفات PDF فقط | الحد الأقصى 100MB</p>
 
                         {{-- عرض اسم الملف المختار --}}
                         <p id="file-name" class="mt-4 text-base text-gray-700 font-bold max-w-sm truncate hidden"></p>
@@ -133,6 +133,28 @@ function hideProgress() {
 }
 
 // ==========================================================
+// تحليل الأخطاء
+// ==========================================================
+function analyzeError(error) {
+    if (error.name === 'AbortError') {
+        return { type: 'abort', message: 'تم إلغاء العملية' };
+    }
+    if (error instanceof TypeError) {
+        return { type: 'network', message: 'خطأ في الاتصال بالخادم' };
+    }
+    if (error instanceof SyntaxError) {
+        return { type: 'json', message: 'خطأ في معالجة البيانات' };
+    }
+    if (error.message?.includes('Failed to fetch')) {
+        return { type: 'network', message: 'فشل في الاتصال بالخادم' };
+    }
+    if (error.message?.includes('Network request failed')) {
+        return { type: 'network', message: 'فشل في الاتصال بالشبكة' };
+    }
+    return { type: 'unknown', message: error.message || 'حدث خطأ غير معروف' };
+}
+
+// ==========================================================
 // إدارة الملفات
 // ==========================================================
 const fileInput = document.getElementById('file-input');
@@ -166,9 +188,9 @@ function updateFileInput(files) {
             return;
         }
 
-        // التحقق من حجم الملف (70MB الآن)
-        if (file.size > 70 * 1024 * 1024) {
-            showToast(`حجم الملف كبير جداً (${fileSizeMB} MB). الحد الأقصى 70MB.`, 'error');
+        // التحقق من حجم الملف (100MB الآن)
+        if (file.size > 100 * 1024 * 1024) {
+            showToast(`حجم الملف كبير جداً (${fileSizeMB} MB). الحد الأقصى 100MB.`, 'error');
             fileInput.value = '';
             if (fileNameDisplay) fileNameDisplay.classList.add('hidden');
             if (archiveButton) archiveButton.disabled = true;
@@ -231,6 +253,24 @@ dropZone.addEventListener('click', function(e) {
 });
 
 // ==========================================================
+// اختبار اتصال الخادم
+// ==========================================================
+async function checkServerConnection() {
+    try {
+        const testResponse = await fetch('{{ route('uploads.store') }}', {
+            method: 'HEAD',
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        });
+        return testResponse.ok;
+    } catch (error) {
+        console.error('Server connection test failed:', error);
+        return false;
+    }
+}
+
+// ==========================================================
 // إرسال الفورم
 // ==========================================================
 let uploadController = null;
@@ -240,6 +280,13 @@ document.getElementById('upload-form').addEventListener('submit', async function
 
     if (!fileInput.files.length) {
         showToast('يجب رفع ملف قبل بدء الأرشفة', 'error');
+        return;
+    }
+
+    // التحقق من اتصال الخادم أولاً
+    const isServerConnected = await checkServerConnection();
+    if (!isServerConnected) {
+        showToast('لا يمكن الاتصال بالخادم. تأكد من اتصال الشبكة.', 'error');
         return;
     }
 
@@ -286,11 +333,22 @@ document.getElementById('upload-form').addEventListener('submit', async function
         clearInterval(uploadInterval);
         console.log('Upload response status:', response.status);
 
-        const data = await response.json();
+        // التحقق من نوع المحتوى قبل معالجته كـ JSON
+        const contentType = response.headers.get('content-type');
+        let data;
+
+        if (contentType && contentType.includes('application/json')) {
+            data = await response.json();
+        } else {
+            const text = await response.text();
+            console.error('Non-JSON response:', text);
+            throw new Error('استجابة غير متوقعة من الخادم');
+        }
+
         console.log('Upload response data:', data);
 
         if (!response.ok) {
-            throw new Error(data.error || `خطأ في السيرفر: ${response.status}`);
+            throw new Error(data.error || data.message || `خطأ في السيرفر: ${response.status}`);
         }
 
         if (data.success) {
@@ -315,16 +373,8 @@ document.getElementById('upload-form').addEventListener('submit', async function
     } catch (error) {
         console.error('Upload error details:', error);
 
-        let errorMessage = 'حدث خطأ أثناء الأرشفة';
-
-        if (error.name === 'AbortError') {
-            errorMessage = 'تم إلغاء عملية الرفع';
-        } else if (error.message) {
-            // عرض رسالة الخطأ كاملة
-            errorMessage = error.message;
-        }
-
-        showToast(errorMessage, 'error');
+        const errorAnalysis = analyzeError(error);
+        showToast(errorAnalysis.message, 'error');
         updateProgress(0, 'فشل في المعالجة');
 
     } finally {

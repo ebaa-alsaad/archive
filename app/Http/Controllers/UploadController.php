@@ -61,7 +61,7 @@ class UploadController extends Controller
 
         $zip = new ZipArchive;
         $zipFileName = 'groups_for_' . $upload->original_filename . '.zip';
-        
+
         // المسار المؤقت لملف ZIP
         $tempPath = storage_path('app/temp/' . $zipFileName);
 
@@ -71,15 +71,15 @@ class UploadController extends Controller
         }
 
         if ($zip->open($tempPath, ZipArchive::CREATE | ZipArchive::OVERWRITE) === TRUE) {
-            
+
             $errors = [];
-            
+
             // إضافة كل ملف PDF ناتج إلى ملف ZIP
             foreach ($upload->groups as $group) {
                 if ($group->pdf_path && Storage::exists($group->pdf_path)) {
                     // يجب قراءة محتوى الملفات من الـ Storage
                     $fileContents = Storage::get($group->pdf_path);
-                    
+
                     // استخدام اسم الملف الناتج كما هو محفوظ
                     $zip->addFromString(basename($group->pdf_path), $fileContents);
                 } else {
@@ -88,29 +88,30 @@ class UploadController extends Controller
             }
 
             $zip->close();
-            
+
             // إذا كانت هناك أخطاء، قم بتسجيلها
             if (!empty($errors)) {
                 Log::warning('Some group files were missing during ZIP creation.', ['upload_id' => $upload->id, 'missing_groups' => $errors]);
             }
-            
+
             // إرسال ملف ZIP للمستخدم
             if (File::exists($tempPath)) {
                 $response = response()->download($tempPath, $zipFileName)->deleteFileAfterSend(true);
                 return $response;
             }
         }
-        
+
         return redirect()->back()->with('error', 'حدث خطأ أثناء إنشاء ملف ZIP.');
     }
 
     public function store(Request $request)
     {
-        ini_set('upload_max_filesize', '70M');
-        ini_set('post_max_size', '70M');
-        ini_set('max_execution_time', 600);
-        ini_set('max_input_time', 600);
-        ini_set('memory_limit', '512M');
+        // زيادة الحدود للملفات الكبيرة
+        ini_set('upload_max_filesize', '100M');
+        ini_set('post_max_size', '100M');
+        ini_set('max_execution_time', 1200); // 20 دقيقة
+        ini_set('max_input_time', 1200);
+        ini_set('memory_limit', '1024M');
 
         Log::info('Upload request received', [
             'has_file' => $request->hasFile('pdf_file'),
@@ -120,7 +121,7 @@ class UploadController extends Controller
 
         try {
             $request->validate([
-                'pdf_file' => 'required|mimes:pdf|max:71680'
+                'pdf_file' => 'required|mimes:pdf|max:102400' // 100MB
             ]);
 
             $file = $request->file('pdf_file');
@@ -182,6 +183,7 @@ class UploadController extends Controller
                 ]);
             }
 
+            // تأكد من أن الـ response دائماً JSON
             return response()->json([
                 'success' => false,
                 'error' => 'فشل في معالجة الملف: ' . $e->getMessage()
