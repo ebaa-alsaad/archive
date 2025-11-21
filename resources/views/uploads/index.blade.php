@@ -33,7 +33,7 @@
                         <th class="py-3 px-6 text-center">
                             <i class="fa-solid fa-clock ml-1"></i> حالة المعالجة
                         </th>
-                        {{-- تم حذف عمود "رابط الملف" لدمج وظيفته في "الإجراءات" --}}
+                        {{-- تم دمج رابط الملف في عمود الإجراءات --}}
                         <th class="py-3 px-6 text-center">
                             <i class="fa-solid fa-gears ml-1"></i> الإجراءات
                         </th>
@@ -88,6 +88,7 @@
                         @endif
                         </td>
 
+                        {{-- 🏆 خلية الإجراءات الموحدة --}}
                         <td class="py-4 px-6 text-center">
                             <div class="flex items-center justify-center space-x-3 rtl:space-x-reverse">
 
@@ -134,7 +135,6 @@
 
 </div>
 
-{{-- نموذج الحذف المخفي والدالة الخاصة به --}}
 <form id="delete-form" method="POST" style="display: none;">
     @csrf
     @method('DELETE')

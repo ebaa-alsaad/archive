@@ -7,7 +7,7 @@
 
     <link rel="icon" type="image/png" href="{{ asset('/images/favicon.png') }}">
 
-    <script src="https://kit.fontawesome.com/a81368914c.js" crossorigin="anonymous"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" xintegrity="sha512-SnH5WK+bZxgPHs44uWIX+LLMD/cd24yGIt9R/Nl14yF9wK2oQ9g/GvGtrYpB8WwS2K9mD3t3gD4f2nF5gD2Xw==" crossorigin="anonymous" referrerpolicy="no-referrer" />
 
     <script src="https://cdn.tailwindcss.com"></script>
 
@@ -28,7 +28,7 @@
             background-size: 20px 20px;
             background-color: #f7f9fd; /* لون أوف وايت/أزرق فاتح جداً */
         }
-        
+
         /* 💡 نمط التحديد النشط للقائمة المنسدلة */
         .dropdown-active-link {
             background-color: #f0f4ff; /* bg-blue-50 */
@@ -57,8 +57,8 @@
 
                 {{-- 💡 زر الرفع: تصميم أكثر فخامة (Neumorphism-like shadow) --}}
                 <a href="{{ route('uploads.create') }}"
-                   class="bg-blue-600 text-white px-6 py-2.5 rounded-xl font-extrabold text-base 
-                          shadow-2xl shadow-blue-500/70 
+                   class="bg-blue-600 text-white px-6 py-2.5 rounded-xl font-extrabold text-base
+                          shadow-2xl shadow-blue-500/70
                           hover:bg-blue-700 transition transform hover:-translate-y-0.5 hover:shadow-blue-500/90 duration-300">
                     <i class="fa-solid fa-cloud-upload-alt ml-2"></i> رفع ملف جديد
                 </a>
@@ -84,11 +84,11 @@
                     {{-- 💡 منطقة البروفايل: تصميم أنظف --}}
                     <div x-data="{ open: false }" @keydown.escape.window="open = false" class="relative">
                         <button @click="open = !open" type="button"
-                                class="flex items-center gap-2 p-1 bg-white rounded-full 
-                                       border border-gray-300 hover:border-blue-400 
+                                class="flex items-center gap-2 p-1 bg-white rounded-full
+                                       border border-gray-300 hover:border-blue-400
                                        transition duration-150 focus:outline-none focus:ring-4 focus:ring-blue-500/50">
                             {{-- صورة/رمز البروفايل (الأحرف الأولى ديناميكية) --}}
-                            <div class="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center 
+                            <div class="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center
                                         text-white font-bold text-lg border-2 border-white shadow-md">
                                 {{ $initials }}
                             </div>
@@ -112,7 +112,7 @@
 
                             <div class="py-1">
                                 {{-- رابط تعديل البيانات الشخصية --}}
-                                <a href="{{ route('profile.edit') }}" 
+                                <a href="{{ route('profile.edit') }}"
                                    class="w-full text-right block px-4 py-2 text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-700 transition duration-150 rounded-lg mx-2 my-1">
                                     <i class="fa-solid fa-user-edit ml-2 w-4"></i> تعديل البيانات الشخصية
                                 </a>
@@ -133,7 +133,7 @@
         </div>
 
         {{-- 💡 خط فاصل بسيط --}}
-        <div class="h-px bg-gray-200/70"></div> 
+        <div class="h-px bg-gray-200/70"></div>
 
         {{-- شريط التنقل --}}
         <nav class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
