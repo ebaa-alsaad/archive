@@ -259,29 +259,9 @@ dropZone.addEventListener('click', function(e) {
 });
 
 // ==========================================================
-// اختبار اتصال الخادم
-// ==========================================================
-async function checkServerConnection() {
-    try {
-        const testResponse = await fetch('{{ route('uploads.store') }}', {
-            method: 'HEAD',
-            headers: {
-                'X-Requested-With': 'XMLHttpRequest'
-            }
-        });
-        return testResponse.ok;
-    } catch (error) {
-        console.error('Server connection test failed:', error);
-        return false;
-    }
-}
-
-// ==========================================================
-// إرسال الفورم - الإصدار المحسن للوقت الطويل
+// إرسال الفورم - الإصدار المحسن مع تقدم حقيقي
 // ==========================================================
 let uploadController = null;
-let uploadTimeout = null;
-let progressInterval = null;
 
 document.getElementById('upload-form').addEventListener('submit', async function (e) {
     e.preventDefault();
@@ -298,168 +278,158 @@ document.getElementById('upload-form').addEventListener('submit', async function
 
     // إعداد حالة الرفع
     archiveButton.disabled = true;
-    archiveButton.innerHTML = '<i class="fa-solid fa-spinner fa-spin ml-2"></i> جاري المعالجة...';
+    archiveButton.innerHTML = '<i class="fa-solid fa-spinner fa-spin ml-2"></i> جاري الرفع...';
 
     // إظهار شريط التقدم
-    showProgress('جاري رفع الملف...');
+    showProgress('جاري رفع الملف... 0%');
 
     // إنشاء AbortController
     uploadController = new AbortController();
 
     try {
-        console.log('Starting upload...', {
-            file: file.name,
-            size: file.size,
-            type: file.type,
-            sizeMB: fileSizeMB
-        });
+        console.log('Starting upload for file:', file.name, 'Size:', fileSizeMB + 'MB');
 
-        // محاكاة تقدم الرفع (أبطأ وأكثر واقعية)
-        let uploadProgress = 0;
-        progressInterval = setInterval(() => {
-            uploadProgress += 1; // أبطأ بكثير
-            if (uploadProgress < 85) {
-                const messages = [
-                    'جاري رفع الملف...',
-                    'جاري معالجة البيانات...',
-                    'جاري تقسيم المستند...',
-                    'جاري استخراج النصوص...'
-                ];
-                const randomMessage = messages[Math.floor(Math.random() * messages.length)];
-                updateProgress(uploadProgress, `${randomMessage} ${uploadProgress}%`);
-            }
-        }, 800);
+        // استخدام XMLHttpRequest للحصول على تقدم حقيقي للرفع
+        const xhr = new XMLHttpRequest();
 
-        // إعداد رسائل تطمين للوقت الطويل
-        uploadTimeout = setTimeout(() => {
-            showToast('المعالجة تستغرق وقتاً، الرجاء الانتظار...', 'info');
-        }, 15000); // بعد 15 ثانية
+        // تقدم الرفع الحقيقي
+        xhr.upload.addEventListener('progress', function(e) {
+            if (e.lengthComputable) {
+                const percentComplete = (e.loaded / e.total) * 100;
+                const uploadedMB = (e.loaded / 1024 / 1024).toFixed(2);
+                const totalMB = (e.total / 1024 / 1024).toFixed(2);
 
-        // الرفع الفعلي مع timeout طويل جداً (20 دقيقة)
-        const fetchPromise = fetch('{{ route('uploads.store') }}', {
-            method: 'POST',
-            body: formData,
-            signal: uploadController.signal,
-            headers: {
-                'X-Requested-With': 'XMLHttpRequest',
-                'Accept': 'application/json',
-            }
-        });
+                updateProgress(percentComplete, `جاري رفع الملف... ${uploadedMB}MB / ${totalMB}MB (${Math.round(percentComplete)}%)`);
 
-        // إضافة timeout منفصل للـ fetch
-        const timeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => reject(new Error('Request timeout - took too long')), 1200000); // 20 دقيقة
-        });
+                // حساب السرعة التقريبية والوقت المتبقي
+                if (window.uploadStartTime && e.loaded > 0) {
+                    const timeElapsed = (Date.now() - window.uploadStartTime) / 1000; // ثواني
+                    const speed = (e.loaded / timeElapsed) / 1024 / 1024; // MB/ثانية
 
-        const response = await Promise.race([fetchPromise, timeoutPromise]);
+                    if (speed > 0) {
+                        const remainingTime = (e.total - e.loaded) / (speed * 1024 * 1024); // ثواني متبقية
 
-        // تنظيف الـ intervals والـ timeouts
-        if (progressInterval) clearInterval(progressInterval);
-        if (uploadTimeout) clearTimeout(uploadTimeout);
-
-        console.log('Upload response status:', response.status);
-
-        // قراءة الـ response كـ text أولاً
-        const responseText = await response.text();
-        console.log('Raw response length:', responseText.length);
-        console.log('Raw response preview:', responseText.substring(0, 200));
-
-        let data;
-        try {
-            data = JSON.parse(responseText);
-        } catch (jsonError) {
-            console.warn('JSON parse failed, trying to extract JSON from response');
-
-            // محاولة استخراج JSON من الـ response إذا كان مختلطاً مع نصوص أخرى
-            const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-                try {
-                    data = JSON.parse(jsonMatch[0]);
-                    console.log('Successfully extracted JSON from response');
-                } catch (extractError) {
-                    console.error('Failed to extract JSON:', extractError);
-                    // إذا فشل كل شيء ولكن الـ response ناجح، افترض النجاح
-                    if (response.ok) {
-                        data = {
-                            success: true,
-                            message: 'تمت معالجة الملف بنجاح',
-                            redirect_url: '{{ route("uploads.index") }}'
-                        };
-                    } else {
-                        throw new Error(`استجابة غير متوقعة من الخادم (${response.status})`);
+                        if (remainingTime > 60) {
+                            document.getElementById('progress-message').textContent =
+                                `جاري الرفع... ${Math.round(percentComplete)}% (${Math.round(remainingTime/60)} دقيقة متبقية)`;
+                        } else if (remainingTime > 10) {
+                            document.getElementById('progress-message').textContent =
+                                `جاري الرفع... ${Math.round(percentComplete)}% (${Math.round(remainingTime)} ثانية متبقية)`;
+                        }
                     }
                 }
-            } else if (response.ok) {
-                // إذا كان الـ response ناجحاً ولكن ليس JSON، افترض النجاح
-                data = {
-                    success: true,
-                    message: 'تمت معالجة الملف بنجاح',
-                    redirect_url: '{{ route("uploads.index") }}'
-                };
-            } else {
-                throw new Error(`استجابة غير متوقعة: ${response.status} ${response.statusText}`);
             }
-        }
+        });
 
-        console.log('Upload response data:', data);
+        // بداية الرفع
+        xhr.upload.addEventListener('loadstart', function(e) {
+            window.uploadStartTime = Date.now();
+            console.log('Upload started at:', new Date().toLocaleTimeString());
+            showToast('بدأ رفع الملف...', 'info');
+        });
 
-        if (!response.ok) {
-            throw new Error(data.error || data.message || `خطأ في السيرفر: ${response.status}`);
-        }
+        // promise لـ XMLHttpRequest
+        const uploadPromise = new Promise((resolve, reject) => {
+            xhr.onreadystatechange = function() {
+                if (xhr.readyState === 4) {
+                    if (xhr.status === 200) {
+                        try {
+                            const data = JSON.parse(xhr.responseText);
+                            resolve(data);
+                        } catch (e) {
+                            reject(new Error('فشل في تحليل استجابة الخادم'));
+                        }
+                    } else {
+                        reject(new Error(`فشل في الرفع: ${xhr.status} ${xhr.statusText}`));
+                    }
+                }
+            };
+
+            xhr.onerror = function() {
+                reject(new Error('خطأ في الشبكة أثناء الرفع'));
+            };
+
+            xhr.ontimeout = function() {
+                reject(new Error('انتهت مهلة الرفع'));
+            };
+        });
+
+        // إعداد الـ XHR
+        xhr.open('POST', '{{ route('uploads.store') }}');
+        xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+        xhr.setRequestHeader('Accept', 'application/json');
+        xhr.timeout = 600000; // 10 دقائق للرفع
+
+        // إرسال الطلب
+        xhr.send(formData);
+
+        // الانتظار للنتيجة
+        const data = await uploadPromise;
+
+        console.log('Upload completed successfully:', data);
 
         if (data.success) {
-            updateProgress(100, 'تمت المعالجة بنجاح!');
-            showToast(data.message || 'تمت معالجة الملف بنجاح', 'success');
+            if (data.processing) {
+                // إذا كانت المعالجة في الخلفية
+                updateProgress(100, 'تم الرفع بنجاح! جاري المعالجة في الخلفية...');
+                showToast('تم رفع الملف بنجاح، جاري المعالجة...', 'success');
+
+                // توجيه إلى صفحة العرض لمتابعة التقدم
+                setTimeout(() => {
+                    if (data.upload_id) {
+                        window.location.href = `/uploads/${data.upload_id}`;
+                    } else {
+                        window.location.href = '{{ route("uploads.index") }}';
+                    }
+                }, 2000);
+            } else {
+                // المعالجة الفورية
+                updateProgress(100, 'تمت المعالجة بنجاح!');
+                showToast(data.message || 'تمت معالجة الملف بنجاح', 'success');
+
+                // الانتقال إلى صفحة العرض بعد تأخير قصير
+                setTimeout(() => {
+                    if (data.redirect_url) {
+                        window.location.href = data.redirect_url;
+                    } else if (data.upload_id) {
+                        window.location.href = `/uploads/${data.upload_id}`;
+                    } else {
+                        window.location.href = '{{ route("uploads.index") }}';
+                    }
+                }, 1500);
+            }
 
             // إعادة تعيين الواجهة
             fileInput.value = '';
             updateFileInput([]);
 
-            // الانتقال إلى صفحة العرض بعد تأخير قصير
-            setTimeout(() => {
-                if (data.redirect_url) {
-                    window.location.href = data.redirect_url;
-                } else if (data.upload_id) {
-                    window.location.href = `/uploads/${data.upload_id}`;
-                } else {
-                    window.location.href = '{{ route("uploads.index") }}';
-                }
-            }, 2000);
-
         } else {
-            throw new Error(data.error || 'حدث خطأ غير معروف أثناء المعالجة');
+            throw new Error(data.error || 'حدث خطأ غير معروف');
         }
 
     } catch (error) {
-        console.error('Upload error details:', error);
+        console.error('Upload error:', error);
 
-        // تنظيف الـ intervals والـ timeouts
-        if (progressInterval) clearInterval(progressInterval);
-        if (uploadTimeout) clearTimeout(uploadTimeout);
-
-        const errorAnalysis = analyzeError(error);
-
-        // معالجة خاصة لأخطاء الوقت
-        if (errorAnalysis.type === 'timeout') {
-            showToast('المعالجة تستغرق وقتاً أطول من المتوقع. جاري التحقق من النتيجة...', 'info');
-            // انتظر قليلاً ثم انتقل إلى صفحة الـ uploads
-            setTimeout(() => {
-                window.location.href = '{{ route("uploads.index") }}';
-            }, 3000);
+        let errorMessage = 'حدث خطأ أثناء الرفع';
+        if (error.message.includes('timeout') || error.message.includes('مهلة')) {
+            errorMessage = 'انتهت مهلة الرفع. حاول مرة أخرى بإنترنت أفضل.';
+        } else if (error.message.includes('Network error') || error.message.includes('شبكة')) {
+            errorMessage = 'مشكلة في الاتصال. تأكد من اتصال الإنترنت.';
+        } else if (error.message.includes('فشل في تحليل')) {
+            errorMessage = 'مشكلة في استجابة الخادم. حاول مرة أخرى.';
         } else {
-            showToast(errorAnalysis.message, 'error');
-            updateProgress(0, 'فشل في المعالجة');
+            errorMessage = error.message;
         }
+
+        showToast(errorMessage, 'error');
+        updateProgress(0, 'فشل في الرفع');
 
     } finally {
         // إعادة تعيين الواجهة
         archiveButton.disabled = false;
         archiveButton.innerHTML = '<i class="fa-solid fa-paper-plane ml-2"></i> بدء عملية الأرشفة';
         uploadController = null;
-
-        // تنظيف نهائي
-        if (progressInterval) clearInterval(progressInterval);
-        if (uploadTimeout) clearTimeout(uploadTimeout);
+        delete window.uploadStartTime;
 
         setTimeout(hideProgress, 3000);
     }
@@ -471,8 +441,6 @@ document.getElementById('cancel-upload')?.addEventListener('click', function() {
         uploadController.abort();
         showToast('تم إلغاء عملية الرفع', 'info');
     }
-    if (progressInterval) clearInterval(progressInterval);
-    if (uploadTimeout) clearTimeout(uploadTimeout);
 });
 
 // ==========================================================

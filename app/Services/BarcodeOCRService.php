@@ -257,21 +257,118 @@ class BarcodeOCRService
     /**
      * البحث الديناميكي عن أرقام المستندات
      */
+
     private function findDocumentNumber($content, $documentType, $patterns)
     {
         if (empty($content) || mb_strlen($content) < 2) return null;
+
+        // تنظيف المحتوى أولاً
+        $content = $this->cleanContent($content);
 
         foreach ($patterns as $pattern) {
             $fullPattern = '/' . $pattern . '/ui';
             if (preg_match($fullPattern, $content, $matches)) {
                 $number = $matches[1] ?? null;
-                if ($number) {
-                    Log::debug("Found document number", ['type' => $documentType, 'value' => $number]);
+                if ($number && $this->isValidDocumentNumber($number, $documentType)) {
+                    Log::debug("Found document number", [
+                        'type' => $documentType,
+                        'value' => $number,
+                        'pattern' => $pattern
+                    ]);
                     return $number;
                 }
             }
         }
+
+        // بحث إضافي بأنماط أكثر مرونة
+        return $this->flexibleNumberSearch($content, $documentType);
+    }
+
+    /**
+     * تنظيف المحتوى لتحسين دقة البحث
+     */
+    private function cleanContent($content)
+    {
+        // إزالة المسافات الزائدة
+        $content = preg_replace('/\s+/u', ' ', $content);
+
+        // تصحيح الأرقام المشوهة
+        $replacements = [
+            '٠' => '0', '١' => '1', '٢' => '2', '٣' => '3', '٤' => '4',
+            '٥' => '5', '٦' => '6', '٧' => '7', '٨' => '8', '٩' => '9',
+            'O' => '0', 'o' => '0', 'l' => '1', 'I' => '1', 'Z' => '2',
+            'S' => '5', 'B' => '8'
+        ];
+
+        return str_replace(array_keys($replacements), array_values($replacements), $content);
+    }
+
+    /**
+     * البحث المرن عن الأرقام بأنماط مختلفة
+     */
+    private function flexibleNumberSearch($content, $documentType)
+    {
+        $arabicTypes = [
+            'سند' => ['سند', 'السند', 'رقم السند', 'رقم سند'],
+            'قيد' => ['قيد', 'القيد', 'رقم القيد', 'رقم قيد'],
+            'فاتورة' => ['فاتورة', 'الفاتورة', 'رقم الفاتورة', 'رقم فاتورة']
+        ];
+
+        $patterns = [];
+
+        // أنماط للبحث عن الأرقاق بجوار نوع المستند
+        foreach ($arabicTypes[$documentType] ?? [] as $type) {
+            $patterns[] = $type . '\s*[:\-]?\s*(\d{2,5})';
+            $patterns[] = '(\d{2,5})\s*' . $type;
+            $patterns[] = $type . '\s*رقم\s*(\d{2,5})';
+            $patterns[] = '(\d{2,5})\s*' . $type;
+        }
+
+        foreach ($patterns as $pattern) {
+            if (preg_match('/' . $pattern . '/ui', $content, $matches)) {
+                $number = $matches[1] ?? ($matches[2] ?? null);
+                if ($number && $this->isValidDocumentNumber($number, $documentType)) {
+                    Log::debug("Flexible search found document number", [
+                        'type' => $documentType,
+                        'value' => $number,
+                        'pattern' => $pattern
+                    ]);
+                    return $number;
+                }
+            }
+        }
+
         return null;
+    }
+
+    /**
+     * التحقق من صحة رقم المستند
+     */
+    private function isValidDocumentNumber($number, $type)
+    {
+        $number = trim($number);
+
+        // تحقق من الطول المعقول
+        if (strlen($number) < 2 || strlen($number) > 6) {
+            return false;
+        }
+
+        // تحقق من أن الرقم يحتوي على أرقام فقط
+        if (!preg_match('/^\d+$/', $number)) {
+            return false;
+        }
+
+        // قيم معقولة حسب نوع المستند
+        $reasonableRanges = [
+            'سند' => [1, 9999],
+            'قيد' => [1, 99999],
+            'فاتورة' => [1, 9999]
+        ];
+
+        $range = $reasonableRanges[$type] ?? [1, 9999];
+        $num = intval($number);
+
+        return $num >= $range[0] && $num <= $range[1];
     }
 
     /**
