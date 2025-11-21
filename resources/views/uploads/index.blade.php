@@ -27,7 +27,6 @@
                         <th class="py-3 px-6 text-center">
                             <i class="fa-solid fa-user ml-1"></i> الرافع
                         </th>
-                        {{-- تم تغيير العرض إلى رابط واحد --}}
                         <th class="py-3 px-6 text-center">
                             <i class="fa-solid fa-layer-group ml-1"></i> المجموعات الناتجة
                         </th>
@@ -36,6 +35,9 @@
                         </th>
                         <th class="py-3 px-6 text-center">
                             <i class="fa-solid fa-link ml-1"></i> رابط الملف
+                        </th>
+                        <th class="py-3 px-6 text-center">
+                            <i class="fa-solid fa-gears ml-1"></i> الإجراءات
                         </th>
                     </tr>
                 </thead>
@@ -55,14 +57,13 @@
                             </span>
                         </td>
 
-                        {{-- 🏆 التعديل: رابط واحد لجميع المجموعات الناتجة --}}
+                        {{-- المجموعات الناتجة --}}
                         <td class="py-4 px-6 text-center">
                             @php
                                 $groupsCount = $upload->groups->count();
                             @endphp
 
                             @if($groupsCount > 0)
-                                {{-- 💡 نستخدم رابط يوجه إلى صفحة عرض المجموعات التابعة لهذا الملف --}}
                                 <a href="{{ route('groups.for_upload', ['upload' => $upload->id]) }}"
                                    class="bg-blue-600 text-white py-1.5 px-3 rounded-full text-xs font-bold inline-flex items-center hover:bg-blue-700 transition shadow-md">
                                     <i class="fa-solid fa-list-check ml-1"></i> عرض ({{ $groupsCount }}) مجموعات
@@ -96,6 +97,24 @@
                                 <i class="fa-solid fa-eye mr-1"></i> عرض
                             </a>
                         </td>
+
+                        <td class="py-4 px-6 text-center">
+                            <div class="flex items-center justify-center space-x-2 rtl:space-x-reverse">
+                                {{-- رابط عرض التفاصيل --}}
+                                <a href="{{ route('uploads.show', $upload->id) }}" title="عرض التفاصيل للملف: {{ $upload->original_filename }}"
+                                    class="text-blue-600 hover:text-blue-800 transition transform hover:scale-110">
+                                    <i class="fa-solid fa-info-circle text-lg"></i>
+                                </a>
+
+                                {{-- الزر الذي يستدعي دالة الحذف  --}}
+                                <button type="button"
+                                        onclick="confirmDelete('{{ $upload->id }}', '{{ $upload->original_filename }}')"
+                                        title="حذف الملف: {{ $upload->original_filename }}"
+                                        class="text-red-600 hover:text-red-800 transition transform hover:scale-110 p-0 m-0 bg-transparent border-none cursor-pointer">
+                                    <i class="fa-solid fa-trash-alt text-lg"></i>
+                                </button>
+                            </div>
+                        </td>
                     </tr>
                     @empty
                     <tr>
@@ -116,4 +135,31 @@
     </div>
 
 </div>
+
+{{-- 🏆 نموذج الحذف المخفي والدالة الخاصة به --}}
+<form id="delete-form" method="POST" style="display: none;">
+    @csrf
+    @method('DELETE')
+</form>
+
+<script>
+    function confirmDelete(uploadId, filename) {
+        // رسالة التأكيد تستخدم اسم الملف لجعلها أكثر وضوحاً
+        const message = `هل أنت متأكد من حذف الملف الأصلي (${filename}) وجميع المجموعات الناتجة عنه؟ لا يمكن التراجع عن هذا الإجراء.`;
+
+        if (confirm(message)) {
+            // الحصول على النموذج المخفي
+            const form = document.getElementById('delete-form');
+
+            // تحديد مسار الإجراء (Action) للنموذج
+            // هنا نستخدم مسار Laravel Route بشكل صريح
+            // يتم تعويض <upload> برقم المعرف
+            form.action = '/uploads/' + uploadId;
+
+            // إرسال النموذج
+            form.submit();
+        }
+    }
+</script>
+
 @endsection

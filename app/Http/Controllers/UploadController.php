@@ -104,94 +104,30 @@ class UploadController extends Controller
         return redirect()->back()->with('error', 'حدث خطأ أثناء إنشاء ملف ZIP.');
     }
 
-   public function store(Request $request)
+    public function store(Request $request)
     {
-        // زيادة الحدود للملفات الكبيرة
-        ini_set('upload_max_filesize', '200M');
-        ini_set('post_max_size', '200M');
-        ini_set('max_execution_time', 1800);
-        ini_set('max_input_time', 1800);
-        ini_set('memory_limit', '2048M');
-
-        Log::info('Upload request received', [
-            'has_file' => $request->hasFile('pdf_file'),
-            'file_size' => $request->file('pdf_file')?->getSize(),
-            'file_size_mb' => $request->file('pdf_file') ? round($request->file('pdf_file')->getSize() / 1024 / 1024, 2) : 0
+        $request->validate([
+            'pdf' => 'required|mimes:pdf|max:50000'
         ]);
 
-        try {
-            $request->validate([
-                'pdf_file' => 'required|mimes:pdf|max:204800' // 200MB
-            ]);
+        $file = $request->file('pdf');
+        $storedName = time() . "_" . $file->getClientOriginalName();
+        $path = $file->storeAs('uploads', $storedName, 'local');
 
-            $file = $request->file('pdf_file');
-            $fileSizeMB = round($file->getSize() / 1024 / 1024, 2);
+        $upload = Upload::create([
+            'original_filename' => $file->getClientOriginalName(),
+            'stored_filename'   => $storedName,
+            'status'            => 'queued',
+            'user_id'           => auth()->id(),
+        ]);
 
-            $storedName = $file->store('uploads', 'private');
-            $fullPath = Storage::disk('private')->path($storedName);
+        ProcessPdfJob::dispatch($upload->id);
 
-            // الحصول على عدد الصفحات
-            $pageCount = $this->barcodeService->getPdfPageCount($fullPath);
-
-            // إنشاء سجل الرفع
-            $upload = Upload::create([
-                'original_filename' => $file->getClientOriginalName(),
-                'stored_filename' => $storedName,
-                'total_pages' => $pageCount,
-                'file_size_mb' => $fileSizeMB,
-                'status' => 'processing',
-                'user_id' => auth()->id(),
-            ]);
-
-            // معالجة PDF وتقسيم الأقسام (متزامن - بنفس الـ request)
-            $groups = $this->barcodeService->processPdf($upload);
-
-            // تحديث حالة الرفع
-            $upload->update([
-                'status' => 'completed',
-                'error_message' => null
-            ]);
-
-            $barcodes = [];
-            foreach ($groups as $group) {
-                if ($group instanceof Group && !empty($group->code)) {
-                    $barcodes[] = $group->code;
-                }
-            }
-
-            Log::info('Processing completed successfully', [
-                'upload_id' => $upload->id,
-                'groups_count' => count($groups),
-                'barcodes_found' => $barcodes
-            ]);
-
-            return response()->json([
-                'success' => true,
-                'message' => "تمت معالجة الملف بنجاح ({$fileSizeMB} MB). تم إنشاء " . count($groups) . " قسم.",
-                'barcodes' => $barcodes,
-                'upload_id' => $upload->id,
-                'groups_count' => count($groups),
-                'redirect_url' => route('uploads.show', $upload)
-            ], 200, ['Content-Type' => 'application/json; charset=utf-8'], JSON_UNESCAPED_UNICODE);
-
-        } catch (\Exception $e) {
-            Log::error('Upload processing failed', [
-                'error_message' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-
-            if (isset($upload)) {
-                $upload->update([
-                    'status' => 'failed',
-                    'error_message' => $e->getMessage()
-                ]);
-            }
-
-            return response()->json([
-                'success' => false,
-                'error' => 'فشل في معالجة الملف: ' . $e->getMessage()
-            ], 500, ['Content-Type' => 'application/json; charset=utf-8'], JSON_UNESCAPED_UNICODE);
-        }
+        return response()->json([
+            'success' => true,
+            'message' => 'تم رفع الملف وسيبدأ المعالجة فوراً...',
+            'upload_id' => $upload->id
+        ]);
     }
 
     public function destroy(Upload $upload)
