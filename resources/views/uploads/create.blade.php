@@ -70,6 +70,167 @@
 
 <script>
 // ==========================================================
+// الدوال الأساسية
+// ==========================================================
+function showToast(message, type = 'info') {
+    const toastContainer = document.getElementById('toast-container');
+    const colors = {
+        success: { bg: 'bg-green-600', border: 'border-green-700', text: 'text-white', icon: 'fa-circle-check' },
+        error: { bg: 'bg-red-600', border: 'border-red-700', text: 'text-white', icon: 'fa-circle-xmark' },
+        info: { bg: 'bg-blue-600', border: 'border-blue-700', text: 'text-white', icon: 'fa-info-circle' }
+    };
+
+    const c = colors[type];
+    const toast = document.createElement('div');
+    toast.className = `min-w-[300px] border-l-8 ${c.border} p-4 rounded-xl shadow-2xl ${c.bg} ${c.text} animate-fade-in transition duration-500 ease-out transform`;
+
+    toast.innerHTML = `
+        <div class="flex items-center space-x-3 rtl:space-x-reverse">
+            <i class="fa-solid ${c.icon} text-xl flex-shrink-0"></i>
+            <span class="font-semibold text-sm">${message}</span>
+        </div>
+    `;
+
+    toastContainer.appendChild(toast);
+
+    setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateY(-10px)';
+        setTimeout(() => toast.remove(), 500);
+    }, 4000);
+}
+
+function updateProgress(percentage, message = '') {
+    const progressBar = document.getElementById('progress-bar');
+    const progressPercentage = document.getElementById('progress-percentage');
+    const progressMessage = document.getElementById('progress-message');
+
+    if (progressBar) progressBar.style.width = percentage + '%';
+    if (progressPercentage) progressPercentage.textContent = percentage + '%';
+
+    if (message && progressMessage) {
+        progressMessage.textContent = message;
+    }
+}
+
+function showProgress(message = 'جاري الرفع والمعالجة...') {
+    const progressContainer = document.getElementById('progress-container');
+    const progressMessage = document.getElementById('progress-message');
+
+    if (progressMessage) progressMessage.textContent = message;
+    if (progressContainer) progressContainer.classList.remove('hidden');
+    updateProgress(0, message);
+}
+
+function hideProgress() {
+    const progressContainer = document.getElementById('progress-container');
+    if (progressContainer) {
+        setTimeout(() => {
+            progressContainer.classList.add('hidden');
+            updateProgress(0, '');
+        }, 1000);
+    }
+}
+
+// ==========================================================
+// إدارة الملفات
+// ==========================================================
+const fileInput = document.getElementById('file-input');
+const fileNameDisplay = document.getElementById('file-name');
+const uploadIcon = document.getElementById('upload-icon');
+const archiveButton = document.getElementById('start-archiving');
+const dropZone = document.getElementById('drop-zone');
+
+// 1. تحديث حالة الملف عند الاختيار
+function updateFileInput(files) {
+    console.log('updateFileInput called with:', files);
+
+    if (files && files.length > 0) {
+        const file = files[0];
+        const fileSizeMB = (file.size / 1024 / 1024).toFixed(2);
+
+        console.log('File selected:', {
+            name: file.name,
+            type: file.type,
+            size: file.size,
+            sizeMB: fileSizeMB
+        });
+
+        // التحقق من نوع الملف
+        if (file.type !== 'application/pdf') {
+            showToast('الرجاء اختيار ملف بصيغة PDF فقط.', 'error');
+            fileInput.value = '';
+            if (fileNameDisplay) fileNameDisplay.classList.add('hidden');
+            if (archiveButton) archiveButton.disabled = true;
+            if (uploadIcon) uploadIcon.className = 'fa-solid fa-file-arrow-up text-5xl text-blue-500 mb-4 transition duration-300';
+            return;
+        }
+
+        // التحقق من حجم الملف (100MB الآن)
+        if (file.size > 100 * 1024 * 1024) {
+            showToast(`حجم الملف كبير جداً (${fileSizeMB} MB). الحد الأقصى 100MB.`, 'error');
+            fileInput.value = '';
+            if (fileNameDisplay) fileNameDisplay.classList.add('hidden');
+            if (archiveButton) archiveButton.disabled = true;
+            return;
+        }
+
+        // عرض اسم الملف والحجم
+        if (fileNameDisplay) {
+            fileNameDisplay.textContent = `${file.name} (${fileSizeMB} MB)`;
+            fileNameDisplay.classList.remove('hidden');
+        }
+
+        // تحديث الأيقونة
+        if (uploadIcon) {
+            uploadIcon.className = 'fa-solid fa-file-circle-check text-5xl text-green-500 mb-4 transition duration-300';
+        }
+
+        // تفعيل الزر
+        if (archiveButton) {
+            archiveButton.disabled = false;
+        }
+
+        console.log('File successfully selected and validated');
+
+    } else {
+        // لا يوجد ملف
+        console.log('No file selected');
+        if (fileNameDisplay) {
+            fileNameDisplay.textContent = '';
+            fileNameDisplay.classList.add('hidden');
+        }
+        if (archiveButton) {
+            archiveButton.disabled = true;
+        }
+        if (uploadIcon) {
+            uploadIcon.className = 'fa-solid fa-file-arrow-up text-5xl text-blue-500 mb-4 transition duration-300';
+        }
+    }
+}
+
+// 2. استماع لتغيير الملف
+fileInput.addEventListener('change', function () {
+    console.log('File input changed');
+    updateFileInput(this.files);
+});
+
+// 3. دالة السحب والإفلات
+function handleDrop(e) {
+    console.log('File dropped');
+    if (e.dataTransfer.files.length) {
+        fileInput.files = e.dataTransfer.files;
+        updateFileInput(fileInput.files);
+    }
+}
+
+// 4. جعل منطقة الرفع قابلة للنقر
+dropZone.addEventListener('click', function(e) {
+    console.log('Drop zone clicked - opening file dialog');
+    fileInput.click();
+});
+
+// ==========================================================
 // إرسال الفورم - الإصدار المحسن
 // ==========================================================
 let uploadController = null;
@@ -204,6 +365,17 @@ document.getElementById('cancel-upload')?.addEventListener('click', function() {
     if (uploadController) {
         uploadController.abort();
         showToast('تم إلغاء عملية الرفع', 'info');
+    }
+});
+
+// ==========================================================
+// التهيئة الأولية
+// ==========================================================
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('Page loaded - file upload system ready');
+    // التأكد من أن الزر معطل في البداية
+    if (archiveButton) {
+        archiveButton.disabled = true;
     }
 });
 </script>
