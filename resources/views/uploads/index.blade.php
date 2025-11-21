@@ -33,9 +33,7 @@
                         <th class="py-3 px-6 text-center">
                             <i class="fa-solid fa-clock ml-1"></i> حالة المعالجة
                         </th>
-                        <th class="py-3 px-6 text-center">
-                            <i class="fa-solid fa-link ml-1"></i> رابط الملف
-                        </th>
+                        {{-- تم حذف عمود "رابط الملف" لدمج وظيفته في "الإجراءات" --}}
                         <th class="py-3 px-6 text-center">
                             <i class="fa-solid fa-gears ml-1"></i> الإجراءات
                         </th>
@@ -90,26 +88,26 @@
                         @endif
                         </td>
 
-                        {{-- رابط الملف --}}
                         <td class="py-4 px-6 text-center">
-                            <a href="{{ route('uploads.show_file', ['upload' => $upload->id]) }}" target="_blank"
-                                class="text-blue-600 hover:text-blue-800 transition font-bold text-sm">
-                                <i class="fa-solid fa-eye mr-1"></i> عرض
-                            </a>
-                        </td>
+                            <div class="flex items-center justify-center space-x-3 rtl:space-x-reverse">
 
-                        <td class="py-4 px-6 text-center">
-                            <div class="flex items-center justify-center space-x-2 rtl:space-x-reverse">
-                                {{-- رابط عرض التفاصيل --}}
-                                <a href="{{ route('uploads.show', $upload->id) }}" title="عرض التفاصيل للملف: {{ $upload->original_filename }}"
+                                {{-- 1. رابط عرض الملف الأصلي (العين) --}}
+                                <a href="{{ route('uploads.show_file', ['upload' => $upload->id]) }}" target="_blank"
+                                    title="عرض الملف الأصلي: {{ $upload->original_filename }}"
+                                    class="text-green-600 hover:text-green-800 transition transform hover:scale-110">
+                                    <i class="fa-solid fa-eye text-lg"></i>
+                                </a>
+
+                                {{-- 2. رابط عرض التفاصيل (المعلومات) --}}
+                                <a href="{{ route('uploads.show', $upload->id) }}" title="عرض تفاصيل المعالجة"
                                     class="text-blue-600 hover:text-blue-800 transition transform hover:scale-110">
                                     <i class="fa-solid fa-info-circle text-lg"></i>
                                 </a>
 
-                                {{-- الزر الذي يستدعي دالة الحذف  --}}
+                                {{-- 3. الزر الذي يستدعي دالة الحذف (السلة) --}}
                                 <button type="button"
                                         onclick="confirmDelete('{{ $upload->id }}', '{{ $upload->original_filename }}')"
-                                        title="حذف الملف: {{ $upload->original_filename }}"
+                                        title="حذف الملف وجميع بياناته"
                                         class="text-red-600 hover:text-red-800 transition transform hover:scale-110 p-0 m-0 bg-transparent border-none cursor-pointer">
                                     <i class="fa-solid fa-trash-alt text-lg"></i>
                                 </button>
@@ -118,7 +116,7 @@
                     </tr>
                     @empty
                     <tr>
-                        <td colspan="6" class="py-12 text-center text-gray-500 text-xl font-medium bg-gray-50">
+                        <td colspan="5" class="py-12 text-center text-gray-500 text-xl font-medium bg-gray-50">
                             <i class="fa-solid fa-file-upload text-3xl mb-3 text-gray-400"></i>
                             <p>لا توجد ملفات مرفوعة حالياً.</p>
                         </td>
@@ -136,7 +134,7 @@
 
 </div>
 
-{{-- 🏆 نموذج الحذف المخفي والدالة الخاصة به --}}
+{{-- نموذج الحذف المخفي والدالة الخاصة به --}}
 <form id="delete-form" method="POST" style="display: none;">
     @csrf
     @method('DELETE')
@@ -144,19 +142,13 @@
 
 <script>
     function confirmDelete(uploadId, filename) {
-        // رسالة التأكيد تستخدم اسم الملف لجعلها أكثر وضوحاً
         const message = `هل أنت متأكد من حذف الملف الأصلي (${filename}) وجميع المجموعات الناتجة عنه؟ لا يمكن التراجع عن هذا الإجراء.`;
 
         if (confirm(message)) {
-            // الحصول على النموذج المخفي
             const form = document.getElementById('delete-form');
 
-            // تحديد مسار الإجراء (Action) للنموذج
-            // هنا نستخدم مسار Laravel Route بشكل صريح
-            // يتم تعويض <upload> برقم المعرف
             form.action = '/uploads/' + uploadId;
 
-            // إرسال النموذج
             form.submit();
         }
     }
