@@ -70,218 +70,9 @@
 
 <script>
 // ==========================================================
-// الدوال الأساسية
-// ==========================================================
-function showToast(message, type = 'info') {
-    const toastContainer = document.getElementById('toast-container');
-    const colors = {
-        success: { bg: 'bg-green-600', border: 'border-green-700', text: 'text-white', icon: 'fa-circle-check' },
-        error: { bg: 'bg-red-600', border: 'border-red-700', text: 'text-white', icon: 'fa-circle-xmark' },
-        info: { bg: 'bg-blue-600', border: 'border-blue-700', text: 'text-white', icon: 'fa-info-circle' }
-    };
-
-    const c = colors[type];
-    const toast = document.createElement('div');
-    toast.className = `min-w-[300px] border-l-8 ${c.border} p-4 rounded-xl shadow-2xl ${c.bg} ${c.text} animate-fade-in transition duration-500 ease-out transform`;
-
-    toast.innerHTML = `
-        <div class="flex items-center space-x-3 rtl:space-x-reverse">
-            <i class="fa-solid ${c.icon} text-xl flex-shrink-0"></i>
-            <span class="font-semibold text-sm">${message}</span>
-        </div>
-    `;
-
-    toastContainer.appendChild(toast);
-
-    setTimeout(() => {
-        toast.style.opacity = '0';
-        toast.style.transform = 'translateY(-10px)';
-        setTimeout(() => toast.remove(), 500);
-    }, 4000);
-}
-
-function updateProgress(percentage, message = '') {
-    const progressBar = document.getElementById('progress-bar');
-    const progressPercentage = document.getElementById('progress-percentage');
-    const progressMessage = document.getElementById('progress-message');
-
-    if (progressBar) progressBar.style.width = percentage + '%';
-    if (progressPercentage) progressPercentage.textContent = percentage + '%';
-
-    if (message && progressMessage) {
-        progressMessage.textContent = message;
-    }
-}
-
-function showProgress(message = 'جاري الرفع والمعالجة...') {
-    const progressContainer = document.getElementById('progress-container');
-    const progressMessage = document.getElementById('progress-message');
-
-    if (progressMessage) progressMessage.textContent = message;
-    if (progressContainer) progressContainer.classList.remove('hidden');
-    updateProgress(0, message);
-}
-
-function hideProgress() {
-    const progressContainer = document.getElementById('progress-container');
-    if (progressContainer) {
-        setTimeout(() => {
-            progressContainer.classList.add('hidden');
-            updateProgress(0, '');
-        }, 1000);
-    }
-}
-
-// ==========================================================
-// تحليل الأخطاء
-// ==========================================================
-function analyzeError(error) {
-    if (error.name === 'AbortError') {
-        return { type: 'abort', message: 'تم إلغاء العملية' };
-    }
-    if (error instanceof TypeError) {
-        return { type: 'network', message: 'خطأ في الاتصال بالخادم' };
-    }
-    if (error instanceof SyntaxError) {
-        return { type: 'json', message: 'خطأ في معالجة البيانات' };
-    }
-    if (error.message?.includes('Failed to fetch')) {
-        return { type: 'network', message: 'فشل في الاتصال بالخادم' };
-    }
-    if (error.message?.includes('Network request failed')) {
-        return { type: 'network', message: 'فشل في الاتصال بالشبكة' };
-    }
-    if (error.message?.includes('استجابة غير متوقعة')) {
-        return { type: 'server', message: 'مشكلة في استجابة الخادم' };
-    }
-    if (error.message?.includes('timeout')) {
-        return { type: 'timeout', message: 'انتهت مهلة الاتصال' };
-    }
-    return { type: 'unknown', message: error.message || 'حدث خطأ غير معروف' };
-}
-
-// ==========================================================
-// إدارة الملفات
-// ==========================================================
-const fileInput = document.getElementById('file-input');
-const fileNameDisplay = document.getElementById('file-name');
-const uploadIcon = document.getElementById('upload-icon');
-const archiveButton = document.getElementById('start-archiving');
-const dropZone = document.getElementById('drop-zone');
-
-// 1. تحديث حالة الملف عند الاختيار
-function updateFileInput(files) {
-    console.log('updateFileInput called with:', files);
-
-    if (files && files.length > 0) {
-        const file = files[0];
-        const fileSizeMB = (file.size / 1024 / 1024).toFixed(2);
-
-        console.log('File selected:', {
-            name: file.name,
-            type: file.type,
-            size: file.size,
-            sizeMB: fileSizeMB
-        });
-
-        // التحقق من نوع الملف
-        if (file.type !== 'application/pdf') {
-            showToast('الرجاء اختيار ملف بصيغة PDF فقط.', 'error');
-            fileInput.value = '';
-            if (fileNameDisplay) fileNameDisplay.classList.add('hidden');
-            if (archiveButton) archiveButton.disabled = true;
-            if (uploadIcon) uploadIcon.className = 'fa-solid fa-file-arrow-up text-5xl text-blue-500 mb-4 transition duration-300';
-            return;
-        }
-
-        // التحقق من حجم الملف (100MB الآن)
-        if (file.size > 100 * 1024 * 1024) {
-            showToast(`حجم الملف كبير جداً (${fileSizeMB} MB). الحد الأقصى 100MB.`, 'error');
-            fileInput.value = '';
-            if (fileNameDisplay) fileNameDisplay.classList.add('hidden');
-            if (archiveButton) archiveButton.disabled = true;
-            return;
-        }
-
-        // عرض اسم الملف والحجم
-        if (fileNameDisplay) {
-            fileNameDisplay.textContent = `${file.name} (${fileSizeMB} MB)`;
-            fileNameDisplay.classList.remove('hidden');
-        }
-
-        // تحديث الأيقونة
-        if (uploadIcon) {
-            uploadIcon.className = 'fa-solid fa-file-circle-check text-5xl text-green-500 mb-4 transition duration-300';
-        }
-
-        // تفعيل الزر
-        if (archiveButton) {
-            archiveButton.disabled = false;
-        }
-
-        console.log('File successfully selected and validated');
-
-    } else {
-        // لا يوجد ملف
-        console.log('No file selected');
-        if (fileNameDisplay) {
-            fileNameDisplay.textContent = '';
-            fileNameDisplay.classList.add('hidden');
-        }
-        if (archiveButton) {
-            archiveButton.disabled = true;
-        }
-        if (uploadIcon) {
-            uploadIcon.className = 'fa-solid fa-file-arrow-up text-5xl text-blue-500 mb-4 transition duration-300';
-        }
-    }
-}
-
-// 2. استماع لتغيير الملف
-fileInput.addEventListener('change', function () {
-    console.log('File input changed');
-    updateFileInput(this.files);
-});
-
-// 3. دالة السحب والإفلات
-function handleDrop(e) {
-    console.log('File dropped');
-    if (e.dataTransfer.files.length) {
-        fileInput.files = e.dataTransfer.files;
-        updateFileInput(fileInput.files);
-    }
-}
-
-// 4. جعل منطقة الرفع قابلة للنقر
-dropZone.addEventListener('click', function(e) {
-    console.log('Drop zone clicked - opening file dialog');
-    fileInput.click();
-});
-
-// ==========================================================
-// اختبار اتصال الخادم
-// ==========================================================
-async function checkServerConnection() {
-    try {
-        const testResponse = await fetch('{{ route('uploads.store') }}', {
-            method: 'HEAD',
-            headers: {
-                'X-Requested-With': 'XMLHttpRequest'
-            }
-        });
-        return testResponse.ok;
-    } catch (error) {
-        console.error('Server connection test failed:', error);
-        return false;
-    }
-}
-
-// ==========================================================
-// إرسال الفورم - الإصدار المحسن للوقت الطويل
+// إرسال الفورم - الإصدار المحسن
 // ==========================================================
 let uploadController = null;
-let uploadTimeout = null;
-let progressInterval = null;
 
 document.getElementById('upload-form').addEventListener('submit', async function (e) {
     e.preventDefault();
@@ -298,45 +89,34 @@ document.getElementById('upload-form').addEventListener('submit', async function
 
     // إعداد حالة الرفع
     archiveButton.disabled = true;
-    archiveButton.innerHTML = '<i class="fa-solid fa-spinner fa-spin ml-2"></i> جاري المعالجة...';
+    archiveButton.innerHTML = '<i class="fa-solid fa-spinner fa-spin ml-2"></i> جاري الرفع...';
 
     // إظهار شريط التقدم
-    showProgress('جاري رفع الملف...');
+    showProgress('جاري رفع الملف... 0%');
 
     // إنشاء AbortController
     uploadController = new AbortController();
 
     try {
-        console.log('Starting upload...', {
-            file: file.name,
-            size: file.size,
-            type: file.type,
-            sizeMB: fileSizeMB
-        });
+        console.log('Starting upload for file:', file.name, 'Size:', fileSizeMB + 'MB');
 
-        // محاكاة تقدم الرفع (أبطأ وأكثر واقعية)
+        // محاكاة تقدم واقعية للرفع
         let uploadProgress = 0;
-        progressInterval = setInterval(() => {
-            uploadProgress += 1; // أبطأ بكثير
-            if (uploadProgress < 85) {
-                const messages = [
-                    'جاري رفع الملف...',
-                    'جاري معالجة البيانات...',
-                    'جاري تقسيم المستند...',
-                    'جاري استخراج النصوص...'
-                ];
-                const randomMessage = messages[Math.floor(Math.random() * messages.length)];
-                updateProgress(uploadProgress, `${randomMessage} ${uploadProgress}%`);
+        const progressInterval = setInterval(() => {
+            if (uploadProgress < 90) {
+                uploadProgress += 2;
+
+                // رسائل واقعية بناءً على مرحلة التقدم
+                let message = 'جاري رفع الملف...';
+                if (uploadProgress > 50) message = 'جاري إكمال الرفع...';
+                if (uploadProgress > 80) message = 'جاري بدء المعالجة...';
+
+                updateProgress(uploadProgress, `${message} ${uploadProgress}%`);
             }
-        }, 800);
+        }, 400);
 
-        // إعداد رسائل تطمين للوقت الطويل
-        uploadTimeout = setTimeout(() => {
-            showToast('المعالجة تستغرق وقتاً، الرجاء الانتظار...', 'info');
-        }, 15000); // بعد 15 ثانية
-
-        // الرفع الفعلي مع timeout طويل جداً (20 دقيقة)
-        const fetchPromise = fetch('{{ route('uploads.store') }}', {
+        // الرفع الفعلي
+        const response = await fetch('{{ route('uploads.store') }}', {
             method: 'POST',
             body: formData,
             signal: uploadController.signal,
@@ -346,59 +126,21 @@ document.getElementById('upload-form').addEventListener('submit', async function
             }
         });
 
-        // إضافة timeout منفصل للـ fetch
-        const timeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => reject(new Error('Request timeout - took too long')), 1200000); // 20 دقيقة
-        });
-
-        const response = await Promise.race([fetchPromise, timeoutPromise]);
-
-        // تنظيف الـ intervals والـ timeouts
-        if (progressInterval) clearInterval(progressInterval);
-        if (uploadTimeout) clearTimeout(uploadTimeout);
+        // أوقف محاكاة التقدم
+        clearInterval(progressInterval);
 
         console.log('Upload response status:', response.status);
 
-        // قراءة الـ response كـ text أولاً
+        // قراءة الـ response
         const responseText = await response.text();
-        console.log('Raw response length:', responseText.length);
-        console.log('Raw response preview:', responseText.substring(0, 200));
+        console.log('Response received');
 
         let data;
         try {
             data = JSON.parse(responseText);
         } catch (jsonError) {
-            console.warn('JSON parse failed, trying to extract JSON from response');
-
-            // محاولة استخراج JSON من الـ response إذا كان مختلطاً مع نصوص أخرى
-            const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-                try {
-                    data = JSON.parse(jsonMatch[0]);
-                    console.log('Successfully extracted JSON from response');
-                } catch (extractError) {
-                    console.error('Failed to extract JSON:', extractError);
-                    // إذا فشل كل شيء ولكن الـ response ناجح، افترض النجاح
-                    if (response.ok) {
-                        data = {
-                            success: true,
-                            message: 'تمت معالجة الملف بنجاح',
-                            redirect_url: '{{ route("uploads.index") }}'
-                        };
-                    } else {
-                        throw new Error(`استجابة غير متوقعة من الخادم (${response.status})`);
-                    }
-                }
-            } else if (response.ok) {
-                // إذا كان الـ response ناجحاً ولكن ليس JSON، افترض النجاح
-                data = {
-                    success: true,
-                    message: 'تمت معالجة الملف بنجاح',
-                    redirect_url: '{{ route("uploads.index") }}'
-                };
-            } else {
-                throw new Error(`استجابة غير متوقعة: ${response.status} ${response.statusText}`);
-            }
+            console.error('JSON parse failed:', jsonError);
+            throw new Error('استجابة غير صحيحة من الخادم');
         }
 
         console.log('Upload response data:', data);
@@ -408,8 +150,9 @@ document.getElementById('upload-form').addEventListener('submit', async function
         }
 
         if (data.success) {
+            // الانتقال إلى 100% فوراً
             updateProgress(100, 'تمت المعالجة بنجاح!');
-            showToast(data.message || 'تمت معالجة الملف بنجاح', 'success');
+            showToast(data.message, 'success');
 
             // إعادة تعيين الواجهة
             fileInput.value = '';
@@ -424,43 +167,34 @@ document.getElementById('upload-form').addEventListener('submit', async function
                 } else {
                     window.location.href = '{{ route("uploads.index") }}';
                 }
-            }, 2000);
+            }, 1500);
 
         } else {
             throw new Error(data.error || 'حدث خطأ غير معروف أثناء المعالجة');
         }
 
     } catch (error) {
-        console.error('Upload error details:', error);
+        console.error('Upload error:', error);
 
-        // تنظيف الـ intervals والـ timeouts
-        if (progressInterval) clearInterval(progressInterval);
-        if (uploadTimeout) clearTimeout(uploadTimeout);
-
-        const errorAnalysis = analyzeError(error);
-
-        // معالجة خاصة لأخطاء الوقت
-        if (errorAnalysis.type === 'timeout') {
-            showToast('المعالجة تستغرق وقتاً أطول من المتوقع. جاري التحقق من النتيجة...', 'info');
-            // انتظر قليلاً ثم انتقل إلى صفحة الـ uploads
-            setTimeout(() => {
-                window.location.href = '{{ route("uploads.index") }}';
-            }, 3000);
+        let errorMessage = 'حدث خطأ أثناء الرفع';
+        if (error.name === 'AbortError') {
+            errorMessage = 'تم إلغاء عملية الرفع';
+        } else if (error.message.includes('Failed to fetch')) {
+            errorMessage = 'فشل في الاتصال بالخادم. تأكد من اتصال الإنترنت.';
+        } else if (error.message.includes('network')) {
+            errorMessage = 'مشكلة في الشبكة. حاول مرة أخرى.';
         } else {
-            showToast(errorAnalysis.message, 'error');
-            updateProgress(0, 'فشل في المعالجة');
+            errorMessage = error.message;
         }
+
+        showToast(errorMessage, 'error');
+        updateProgress(0, 'فشل في الرفع');
 
     } finally {
         // إعادة تعيين الواجهة
         archiveButton.disabled = false;
         archiveButton.innerHTML = '<i class="fa-solid fa-paper-plane ml-2"></i> بدء عملية الأرشفة';
         uploadController = null;
-
-        // تنظيف نهائي
-        if (progressInterval) clearInterval(progressInterval);
-        if (uploadTimeout) clearTimeout(uploadTimeout);
-
         setTimeout(hideProgress, 3000);
     }
 });
@@ -470,19 +204,6 @@ document.getElementById('cancel-upload')?.addEventListener('click', function() {
     if (uploadController) {
         uploadController.abort();
         showToast('تم إلغاء عملية الرفع', 'info');
-    }
-    if (progressInterval) clearInterval(progressInterval);
-    if (uploadTimeout) clearTimeout(uploadTimeout);
-});
-
-// ==========================================================
-// التهيئة الأولية
-// ==========================================================
-document.addEventListener('DOMContentLoaded', function() {
-    console.log('Page loaded - file upload system ready');
-    // التأكد من أن الزر معطل في البداية
-    if (archiveButton) {
-        archiveButton.disabled = true;
     }
 });
 </script>

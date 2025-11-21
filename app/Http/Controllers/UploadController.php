@@ -104,15 +104,14 @@ class UploadController extends Controller
         return redirect()->back()->with('error', 'حدث خطأ أثناء إنشاء ملف ZIP.');
     }
 
-    public function store(Request $request)
+   public function store(Request $request)
     {
-        // إعدادات متقدمة
+        // زيادة الحدود للملفات الكبيرة
         ini_set('upload_max_filesize', '200M');
         ini_set('post_max_size', '200M');
         ini_set('max_execution_time', 1800);
         ini_set('max_input_time', 1800);
         ini_set('memory_limit', '2048M');
-        ignore_user_abort(true);
 
         Log::info('Upload request received', [
             'has_file' => $request->hasFile('pdf_file'),
@@ -128,43 +127,52 @@ class UploadController extends Controller
             $file = $request->file('pdf_file');
             $fileSizeMB = round($file->getSize() / 1024 / 1024, 2);
 
-            // حفظ الملف مباشرة بدون تأخير
             $storedName = $file->store('uploads', 'private');
             $fullPath = Storage::disk('private')->path($storedName);
 
-            // إنشاء سجل الرفع فوراً
+            // الحصول على عدد الصفحات
+            $pageCount = $this->barcodeService->getPdfPageCount($fullPath);
+
+            // إنشاء سجل الرفع
             $upload = Upload::create([
                 'original_filename' => $file->getClientOriginalName(),
                 'stored_filename' => $storedName,
-                'total_pages' => 0, // سيتم تحديثه لاحقاً
+                'total_pages' => $pageCount,
                 'file_size_mb' => $fileSizeMB,
                 'status' => 'processing',
                 'user_id' => auth()->id(),
             ]);
 
-            // إرجاع response فوري والبدء في المعالجة في الخلفية
-            $response = response()->json([
-                'success' => true,
-                'message' => 'تم رفع الملف بنجاح، جاري المعالجة...',
-                'upload_id' => $upload->id,
-                'processing' => true
+            // معالجة PDF وتقسيم الأقسام (متزامن - بنفس الـ request)
+            $groups = $this->barcodeService->processPdf($upload);
+
+            // تحديث حالة الرفع
+            $upload->update([
+                'status' => 'completed',
+                'error_message' => null
             ]);
 
-            // إرسال الـ response فوراً
-            if (ob_get_level()) ob_end_clean();
-            header('Connection: close');
-            header('Content-Length: '. strlen($response->getContent()));
-            $response->send();
-
-            // بدء المعالجة في الخلفية
-            if (function_exists('fastcgi_finish_request')) {
-                fastcgi_finish_request();
+            $barcodes = [];
+            foreach ($groups as $group) {
+                if ($group instanceof Group && !empty($group->code)) {
+                    $barcodes[] = $group->code;
+                }
             }
 
-            // المعالجة الفعلية
-            $this->processUploadInBackground($upload, $fullPath);
+            Log::info('Processing completed successfully', [
+                'upload_id' => $upload->id,
+                'groups_count' => count($groups),
+                'barcodes_found' => $barcodes
+            ]);
 
-            return $response;
+            return response()->json([
+                'success' => true,
+                'message' => "تمت معالجة الملف بنجاح ({$fileSizeMB} MB). تم إنشاء " . count($groups) . " قسم.",
+                'barcodes' => $barcodes,
+                'upload_id' => $upload->id,
+                'groups_count' => count($groups),
+                'redirect_url' => route('uploads.show', $upload)
+            ], 200, ['Content-Type' => 'application/json; charset=utf-8'], JSON_UNESCAPED_UNICODE);
 
         } catch (\Exception $e) {
             Log::error('Upload processing failed', [
@@ -182,38 +190,7 @@ class UploadController extends Controller
             return response()->json([
                 'success' => false,
                 'error' => 'فشل في معالجة الملف: ' . $e->getMessage()
-            ], 500);
-        }
-    }
-
-    private function processUploadInBackground($upload, $pdfPath)
-    {
-        try {
-            // الحصول على عدد الصفحات
-            $pageCount = $this->barcodeService->getPdfPageCount($pdfPath);
-            $upload->update(['total_pages' => $pageCount]);
-
-            // معالجة PDF وتقسيم الأقسام
-            $groups = $this->barcodeService->processPdf($upload);
-
-            // تحديث حالة الرفع
-            $upload->update([
-                'status' => 'completed',
-                'error_message' => null
-            ]);
-
-            Log::info('Background processing completed', ['upload_id' => $upload->id]);
-
-        } catch (\Exception $e) {
-            Log::error('Background processing failed', [
-                'upload_id' => $upload->id,
-                'error' => $e->getMessage()
-            ]);
-
-            $upload->update([
-                'status' => 'failed',
-                'error_message' => $e->getMessage()
-            ]);
+            ], 500, ['Content-Type' => 'application/json; charset=utf-8'], JSON_UNESCAPED_UNICODE);
         }
     }
 
