@@ -154,6 +154,9 @@ function analyzeError(error) {
     if (error.message?.includes('استجابة غير متوقعة')) {
         return { type: 'server', message: 'مشكلة في استجابة الخادم' };
     }
+    if (error.message?.includes('timeout')) {
+        return { type: 'timeout', message: 'انتهت مهلة الاتصال' };
+    }
     return { type: 'unknown', message: error.message || 'حدث خطأ غير معروف' };
 }
 
@@ -274,9 +277,11 @@ async function checkServerConnection() {
 }
 
 // ==========================================================
-// إرسال الفورم - الإصدار المحسن
+// إرسال الفورم - الإصدار المحسن للوقت الطويل
 // ==========================================================
 let uploadController = null;
+let uploadTimeout = null;
+let progressInterval = null;
 
 document.getElementById('upload-form').addEventListener('submit', async function (e) {
     e.preventDefault();
@@ -286,15 +291,10 @@ document.getElementById('upload-form').addEventListener('submit', async function
         return;
     }
 
-    // التحقق من اتصال الخادم أولاً
-    const isServerConnected = await checkServerConnection();
-    if (!isServerConnected) {
-        showToast('لا يمكن الاتصال بالخادم. تأكد من اتصال الشبكة.', 'error');
-        return;
-    }
-
     const form = e.target;
     const formData = new FormData(form);
+    const file = fileInput.files[0];
+    const fileSizeMB = (file.size / 1024 / 1024).toFixed(2);
 
     // إعداد حالة الرفع
     archiveButton.disabled = true;
@@ -308,22 +308,35 @@ document.getElementById('upload-form').addEventListener('submit', async function
 
     try {
         console.log('Starting upload...', {
-            file: fileInput.files[0].name,
-            size: fileInput.files[0].size,
-            type: fileInput.files[0].type
+            file: file.name,
+            size: file.size,
+            type: file.type,
+            sizeMB: fileSizeMB
         });
 
-        // محاكاة تقدم الرفع
+        // محاكاة تقدم الرفع (أبطأ وأكثر واقعية)
         let uploadProgress = 0;
-        const uploadInterval = setInterval(() => {
-            uploadProgress += 5;
-            if (uploadProgress < 70) {
-                updateProgress(uploadProgress, `جاري رفع الملف... ${uploadProgress}%`);
+        progressInterval = setInterval(() => {
+            uploadProgress += 1; // أبطأ بكثير
+            if (uploadProgress < 85) {
+                const messages = [
+                    'جاري رفع الملف...',
+                    'جاري معالجة البيانات...',
+                    'جاري تقسيم المستند...',
+                    'جاري استخراج النصوص...'
+                ];
+                const randomMessage = messages[Math.floor(Math.random() * messages.length)];
+                updateProgress(uploadProgress, `${randomMessage} ${uploadProgress}%`);
             }
-        }, 200);
+        }, 800);
 
-        // الرفع الفعلي
-        const response = await fetch('{{ route('uploads.store') }}', {
+        // إعداد رسائل تطمين للوقت الطويل
+        uploadTimeout = setTimeout(() => {
+            showToast('المعالجة تستغرق وقتاً، الرجاء الانتظار...', 'info');
+        }, 15000); // بعد 15 ثانية
+
+        // الرفع الفعلي مع timeout طويل جداً (20 دقيقة)
+        const fetchPromise = fetch('{{ route('uploads.store') }}', {
             method: 'POST',
             body: formData,
             signal: uploadController.signal,
@@ -333,39 +346,58 @@ document.getElementById('upload-form').addEventListener('submit', async function
             }
         });
 
-        clearInterval(uploadInterval);
+        // إضافة timeout منفصل للـ fetch
+        const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error('Request timeout - took too long')), 1200000); // 20 دقيقة
+        });
+
+        const response = await Promise.race([fetchPromise, timeoutPromise]);
+
+        // تنظيف الـ intervals والـ timeouts
+        if (progressInterval) clearInterval(progressInterval);
+        if (uploadTimeout) clearTimeout(uploadTimeout);
+
         console.log('Upload response status:', response.status);
 
-        // محاولة قراءة الـ response كـ JSON أولاً، إذا فشل فكنص
+        // قراءة الـ response كـ text أولاً
+        const responseText = await response.text();
+        console.log('Raw response length:', responseText.length);
+        console.log('Raw response preview:', responseText.substring(0, 200));
+
         let data;
         try {
-            data = await response.json();
+            data = JSON.parse(responseText);
         } catch (jsonError) {
-            console.warn('JSON parse failed, trying as text:', jsonError);
-            const textResponse = await response.text();
-            console.log('Raw response:', textResponse);
+            console.warn('JSON parse failed, trying to extract JSON from response');
 
-            // محاولة تحليل الـ response يدوياً إذا كان يحتوي على JSON
-            try {
-                // البحث عن JSON في الـ response
-                const jsonMatch = textResponse.match(/\{.*\}/s);
-                if (jsonMatch) {
+            // محاولة استخراج JSON من الـ response إذا كان مختلطاً مع نصوص أخرى
+            const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                try {
                     data = JSON.parse(jsonMatch[0]);
-                } else {
-                    // إذا كان الـ response ناجحاً (200) ولكن ليس JSON، نفترض النجاح
+                    console.log('Successfully extracted JSON from response');
+                } catch (extractError) {
+                    console.error('Failed to extract JSON:', extractError);
+                    // إذا فشل كل شيء ولكن الـ response ناجح، افترض النجاح
                     if (response.ok) {
                         data = {
                             success: true,
-                            message: 'تمت المعالجة بنجاح',
-                            redirect_url: '/uploads'
+                            message: 'تمت معالجة الملف بنجاح',
+                            redirect_url: '{{ route("uploads.index") }}'
                         };
                     } else {
-                        throw new Error(`استجابة غير متوقعة من الخادم: ${textResponse.substring(0, 100)}...`);
+                        throw new Error(`استجابة غير متوقعة من الخادم (${response.status})`);
                     }
                 }
-            } catch (parseError) {
-                console.error('Failed to parse response:', parseError);
-                throw new Error('لا يمكن معالجة استجابة الخادم');
+            } else if (response.ok) {
+                // إذا كان الـ response ناجحاً ولكن ليس JSON، افترض النجاح
+                data = {
+                    success: true,
+                    message: 'تمت معالجة الملف بنجاح',
+                    redirect_url: '{{ route("uploads.index") }}'
+                };
+            } else {
+                throw new Error(`استجابة غير متوقعة: ${response.status} ${response.statusText}`);
             }
         }
 
@@ -377,37 +409,47 @@ document.getElementById('upload-form').addEventListener('submit', async function
 
         if (data.success) {
             updateProgress(100, 'تمت المعالجة بنجاح!');
-            showToast(data.message, 'success');
+            showToast(data.message || 'تمت معالجة الملف بنجاح', 'success');
 
             // إعادة تعيين الواجهة
             fileInput.value = '';
             updateFileInput([]);
 
-            // الانتقال إلى صفحة العرض
+            // الانتقال إلى صفحة العرض بعد تأخير قصير
             setTimeout(() => {
                 if (data.redirect_url) {
                     window.location.href = data.redirect_url;
+                } else if (data.upload_id) {
+                    window.location.href = `/uploads/${data.upload_id}`;
                 } else {
-                    // إذا لم يكن هناك redirect_url، انتقل إلى صفحة الـ uploads العامة
                     window.location.href = '{{ route("uploads.index") }}';
                 }
-            }, 1500);
+            }, 2000);
 
         } else {
-            throw new Error(data.error || 'حدث خطأ غير معروف');
+            throw new Error(data.error || 'حدث خطأ غير معروف أثناء المعالجة');
         }
 
     } catch (error) {
         console.error('Upload error details:', error);
 
-        // إذا كان هناك response ولكن ليس JSON، عرض رسالة أفضل
-        if (error.message.includes('استجابة غير متوقعة')) {
-            console.log('Non-JSON response received, showing raw response for debugging');
-        }
+        // تنظيف الـ intervals والـ timeouts
+        if (progressInterval) clearInterval(progressInterval);
+        if (uploadTimeout) clearTimeout(uploadTimeout);
 
         const errorAnalysis = analyzeError(error);
-        showToast(errorAnalysis.message, 'error');
-        updateProgress(0, 'فشل في المعالجة');
+
+        // معالجة خاصة لأخطاء الوقت
+        if (errorAnalysis.type === 'timeout') {
+            showToast('المعالجة تستغرق وقتاً أطول من المتوقع. جاري التحقق من النتيجة...', 'info');
+            // انتظر قليلاً ثم انتقل إلى صفحة الـ uploads
+            setTimeout(() => {
+                window.location.href = '{{ route("uploads.index") }}';
+            }, 3000);
+        } else {
+            showToast(errorAnalysis.message, 'error');
+            updateProgress(0, 'فشل في المعالجة');
+        }
 
     } finally {
         // إعادة تعيين الواجهة
@@ -415,7 +457,11 @@ document.getElementById('upload-form').addEventListener('submit', async function
         archiveButton.innerHTML = '<i class="fa-solid fa-paper-plane ml-2"></i> بدء عملية الأرشفة';
         uploadController = null;
 
-        setTimeout(hideProgress, 2000);
+        // تنظيف نهائي
+        if (progressInterval) clearInterval(progressInterval);
+        if (uploadTimeout) clearTimeout(uploadTimeout);
+
+        setTimeout(hideProgress, 3000);
     }
 });
 
@@ -425,6 +471,8 @@ document.getElementById('cancel-upload')?.addEventListener('click', function() {
         uploadController.abort();
         showToast('تم إلغاء عملية الرفع', 'info');
     }
+    if (progressInterval) clearInterval(progressInterval);
+    if (uploadTimeout) clearTimeout(uploadTimeout);
 });
 
 // ==========================================================
