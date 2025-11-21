@@ -161,6 +161,14 @@ class UploadController extends Controller
 
             Log::info('Processing completed successfully');
 
+            // إضافة log للتحقق من الـ response
+            Log::debug('Sending JSON response', [
+                'success' => true,
+                'message' => "تمت معالجة الملف بنجاح ({$fileSizeMB} MB). تم إنشاء " . count($groups) . " قسم.",
+                'upload_id' => $upload->id,
+                'groups_count' => count($groups)
+            ]);
+
             return response()->json([
                 'success' => true,
                 'message' => "تمت معالجة الملف بنجاح ({$fileSizeMB} MB). تم إنشاء " . count($groups) . " قسم.",
@@ -168,7 +176,7 @@ class UploadController extends Controller
                 'upload_id' => $upload->id,
                 'service_used' => get_class($this->barcodeService),
                 'redirect_url' => route('uploads.show', $upload)
-            ]);
+            ], 200, ['Content-Type' => 'application/json; charset=utf-8'], JSON_UNESCAPED_UNICODE);
 
         } catch (\Exception $e) {
             Log::error('Upload processing failed', [
@@ -187,7 +195,7 @@ class UploadController extends Controller
             return response()->json([
                 'success' => false,
                 'error' => 'فشل في معالجة الملف: ' . $e->getMessage()
-            ], 500);
+            ], 500, ['Content-Type' => 'application/json; charset=utf-8'], JSON_UNESCAPED_UNICODE);
         }
     }
 

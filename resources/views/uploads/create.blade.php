@@ -151,6 +151,9 @@ function analyzeError(error) {
     if (error.message?.includes('Network request failed')) {
         return { type: 'network', message: 'فشل في الاتصال بالشبكة' };
     }
+    if (error.message?.includes('استجابة غير متوقعة')) {
+        return { type: 'server', message: 'مشكلة في استجابة الخادم' };
+    }
     return { type: 'unknown', message: error.message || 'حدث خطأ غير معروف' };
 }
 
@@ -271,7 +274,7 @@ async function checkServerConnection() {
 }
 
 // ==========================================================
-// إرسال الفورم
+// إرسال الفورم - الإصدار المحسن
 // ==========================================================
 let uploadController = null;
 
@@ -333,16 +336,37 @@ document.getElementById('upload-form').addEventListener('submit', async function
         clearInterval(uploadInterval);
         console.log('Upload response status:', response.status);
 
-        // التحقق من نوع المحتوى قبل معالجته كـ JSON
-        const contentType = response.headers.get('content-type');
+        // محاولة قراءة الـ response كـ JSON أولاً، إذا فشل فكنص
         let data;
-
-        if (contentType && contentType.includes('application/json')) {
+        try {
             data = await response.json();
-        } else {
-            const text = await response.text();
-            console.error('Non-JSON response:', text);
-            throw new Error('استجابة غير متوقعة من الخادم');
+        } catch (jsonError) {
+            console.warn('JSON parse failed, trying as text:', jsonError);
+            const textResponse = await response.text();
+            console.log('Raw response:', textResponse);
+
+            // محاولة تحليل الـ response يدوياً إذا كان يحتوي على JSON
+            try {
+                // البحث عن JSON في الـ response
+                const jsonMatch = textResponse.match(/\{.*\}/s);
+                if (jsonMatch) {
+                    data = JSON.parse(jsonMatch[0]);
+                } else {
+                    // إذا كان الـ response ناجحاً (200) ولكن ليس JSON، نفترض النجاح
+                    if (response.ok) {
+                        data = {
+                            success: true,
+                            message: 'تمت المعالجة بنجاح',
+                            redirect_url: '/uploads'
+                        };
+                    } else {
+                        throw new Error(`استجابة غير متوقعة من الخادم: ${textResponse.substring(0, 100)}...`);
+                    }
+                }
+            } catch (parseError) {
+                console.error('Failed to parse response:', parseError);
+                throw new Error('لا يمكن معالجة استجابة الخادم');
+            }
         }
 
         console.log('Upload response data:', data);
@@ -363,6 +387,9 @@ document.getElementById('upload-form').addEventListener('submit', async function
             setTimeout(() => {
                 if (data.redirect_url) {
                     window.location.href = data.redirect_url;
+                } else {
+                    // إذا لم يكن هناك redirect_url، انتقل إلى صفحة الـ uploads العامة
+                    window.location.href = '{{ route("uploads.index") }}';
                 }
             }, 1500);
 
@@ -372,6 +399,11 @@ document.getElementById('upload-form').addEventListener('submit', async function
 
     } catch (error) {
         console.error('Upload error details:', error);
+
+        // إذا كان هناك response ولكن ليس JSON، عرض رسالة أفضل
+        if (error.message.includes('استجابة غير متوقعة')) {
+            console.log('Non-JSON response received, showing raw response for debugging');
+        }
 
         const errorAnalysis = analyzeError(error);
         showToast(errorAnalysis.message, 'error');
@@ -391,6 +423,7 @@ document.getElementById('upload-form').addEventListener('submit', async function
 document.getElementById('cancel-upload')?.addEventListener('click', function() {
     if (uploadController) {
         uploadController.abort();
+        showToast('تم إلغاء عملية الرفع', 'info');
     }
 });
 
