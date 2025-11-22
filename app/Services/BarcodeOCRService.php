@@ -18,43 +18,77 @@ class BarcodeOCRService
 
             $singlePage = "$workDir/page_$i.pdf";
 
-            // استخراج صفحة واحدة باستخدام qpdf (أسرع بكثير)
+            // استخراج الصفحة
             shell_exec("qpdf '$pdfPath' --pages '$pdfPath' $i-$i -- '$singlePage'");
 
-            // استخراج صورة الصفحة بسرعة باستخدام pdfimages
+            // استخراج صورة الصفحة
             shell_exec("pdfimages -png '$singlePage' '$workDir/page_$i'");
 
             $png = "$workDir/page_{$i}-000.png";
             if (!file_exists($png)) continue;
 
-            // قراءة الباركود باستخدام ZXing
+            // قراءة الباركود إن وجد
             $barcode = trim(shell_exec("zxing '$png' 2>/dev/null"));
 
+            // OCR fallback
             if (!$barcode) {
-                // fallback OCR فقط عند الحاجة
                 $text = $this->runOcr($png);
             } else {
-                $text = $barcode;
+                $text = $barcode . "\n" . $this->runOcr($png);
             }
 
-            // مثال استخراج رقم السند
-            preg_match('/(\d{3,10})/', $text, $m);
-            $number = $m[1] ?? null;
+            // 🔍 استخراج البيانات الهامة
+            $extracted = $this->extractImportantData($text);
 
             Storage::disk('local')->put("results/{$upload->id}/page_$i.json", json_encode([
-                'page' => $i,
-                'barcode' => $barcode,
-                'text' => $text,
-                'number' => $number
-            ]));
+                'page'      => $i,
+                'barcode'   => $barcode,
+                'text'      => $text,
+                'number'    => $extracted['number'] ?? null,
+                'entry_no'  => $extracted['entry_no'] ?? null,
+                'invoice'   => $extracted['invoice'] ?? null,
+                'date'      => $extracted['date'] ?? null,
+            ], JSON_UNESCAPED_UNICODE));
         }
     }
 
     private function runOcr($image)
     {
         $out = $image . "_ocr";
-        shell_exec("tesseract '$image' '$out' -l ara --oem 1 --psm 6");
-        return file_get_contents("$out.txt") ?: "";
+        shell_exec("tesseract '$image' '$out' -l ara+eng --oem 1 --psm 6");
+        return file_exists("$out.txt") ? file_get_contents("$out.txt") : "";
+    }
+
+    /**
+     * ⭐ استخراج رقم القيد / رقم السند / التاريخ
+     */
+    private function extractImportantData($text)
+    {
+        $clean = trim(str_replace(["\r", "\n"], " ", $text));
+
+        $data = [];
+
+        // رقم القيد Entry No
+        if (preg_match('/(?:رقم القيد|Entry No|Entry)\s*[:\-]?\s*(\d{2,10})/iu', $clean, $m))
+            $data['entry_no'] = $m[1];
+
+        // رقم السند Voucher / سند
+        if (preg_match('/(?:رقم السند|Voucher No|Voucher)\s*[:\-]?\s*(\d{2,12})/iu', $clean, $m))
+            $data['number'] = $m[1];
+
+        // رقم الفاتورة Invoice
+        if (preg_match('/(?:فاتورة|Invoice No|Invoice)\s*[:\-]?\s*(\d{2,12})/iu', $clean, $m))
+            $data['invoice'] = $m[1];
+
+        // التاريخ (يدعم عدة صيغ)
+        if (preg_match('/(\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2})/u', $clean, $m)) {
+            $data['date'] = $m[1];
+        }
+        else if (preg_match('/(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/u', $clean, $m)) {
+            $data['date'] = $m[1];
+        }
+
+        return $data;
     }
 
     private function getPageCount($pdf)
