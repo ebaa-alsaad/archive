@@ -107,7 +107,7 @@ class UploadController extends Controller
         return redirect()->back()->with('error', 'حدث خطأ أثناء إنشاء ملف ZIP.');
     }
 
-   public function store(Request $request)
+    public function store(Request $request)
     {
         $request->validate([
             'pdf_file' => 'required|file|mimes:pdf|max:204800' // 200MB

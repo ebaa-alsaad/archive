@@ -38,7 +38,8 @@ class BarcodeOCRService
 
         $this->pdfHash = md5_file($pdfPath);
         $pageCount = $this->getPdfPageCount($pdfPath);
-
+         $upload->update(['total_pages' => $pageCount]);
+         
         Log::info("Starting parallel PDF processing", [
             'upload_id' => $upload->id,
             'pages' => $pageCount
@@ -204,11 +205,19 @@ class BarcodeOCRService
     private function createGroupFromPages($pdfPath, $pages, $index, $barcode, $upload)
     {
         try {
+            Log::info("Creating group from pages", [
+                'pages' => $pages,
+                'index' => $index,
+                'pages_count' => count($pages)
+            ]);
+
             $filename = $this->generateFilenameWithOCR($pdfPath, $pages, $index, $barcode);
             $filenameSafe = $this->sanitizeFilename($filename) . '.pdf';
 
             $directory = "groups";
             $fullDir = storage_path("app/private/{$directory}");
+            
+            // إنشاء المجلد إذا لم يكن موجوداً
             if (!is_dir($fullDir)) {
                 mkdir($fullDir, 0775, true);
             }
@@ -216,7 +225,19 @@ class BarcodeOCRService
             $outputPath = "{$fullDir}/{$filenameSafe}";
             $dbPath = "{$directory}/{$filenameSafe}";
 
-            if ($this->createOptimizedPdf($pdfPath, $pages, $outputPath)) {
+            Log::info("PDF output details", [
+                'output_path' => $outputPath,
+                'db_path' => $dbPath
+            ]);
+
+            // إنشاء الـ PDF
+            if ($this->createQuickPdf($pdfPath, $pages, $outputPath)) {
+                Log::info("PDF created successfully", [
+                    'output_path' => $outputPath,
+                    'file_exists' => file_exists($outputPath),
+                    'file_size' => file_exists($outputPath) ? filesize($outputPath) : 0
+                ]);
+
                 $group = Group::create([
                     'code' => $barcode,
                     'pdf_path' => $dbPath,
@@ -226,25 +247,82 @@ class BarcodeOCRService
                     'filename' => $filenameSafe
                 ]);
 
-                Log::debug("Group created successfully", [
-                    'group_id' => $group->id,
-                    'filename' => $filenameSafe
-                ]);
-
+                Log::info("Group record created", ['group_id' => $group->id]);
                 return $group;
+            } else {
+                Log::error("Failed to create PDF file", [
+                    'output_path' => $outputPath,
+                    'pages' => $pages
+                ]);
             }
-
-            return null;
 
         } catch (Exception $e) {
             Log::error("Failed to create group from pages", [
                 'upload_id' => $upload->id,
                 'pages' => $pages,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ]);
-            return null;
+        }
+
+        return null;
+    }
+     /**
+     * إنشاء PDF من صفحات محددة
+     */
+    private function createQuickPdf($pdfPath, $pages, $outputPath)
+    {
+        try {
+            if (empty($pages)) {
+                Log::error("No pages provided for PDF creation");
+                return false;
+            }
+
+            $firstPage = min($pages);
+            $lastPage = max($pages);
+
+            Log::info("Creating PDF with Ghostscript", [
+                'input_path' => $pdfPath,
+                'output_path' => $outputPath,
+                'first_page' => $firstPage,
+                'last_page' => $lastPage,
+                'pages_count' => count($pages)
+            ]);
+
+            $cmd = sprintf(
+                'gs -q -dNOPAUSE -dBATCH -sDEVICE=pdfwrite -dCompatibilityLevel=1.7 -dPDFSETTINGS=/prepress -dFirstPage=%d -dLastPage=%d -sOutputFile=%s %s 2>&1',
+                intval($firstPage),
+                intval($lastPage),
+                escapeshellarg($outputPath),
+                escapeshellarg($pdfPath)
+            );
+
+            Log::debug("Ghostscript command", ['cmd' => $cmd]);
+
+            exec($cmd, $output, $returnVar);
+
+            $success = $returnVar === 0 && file_exists($outputPath) && filesize($outputPath) > 0;
+
+            Log::info("PDF creation result", [
+                'success' => $success,
+                'return_var' => $returnVar,
+                'output_path' => $outputPath,
+                'file_exists' => file_exists($outputPath),
+                'file_size' => file_exists($outputPath) ? filesize($outputPath) : 0,
+                'output' => $output
+            ]);
+
+            return $success;
+
+        } catch (Exception $e) {
+            Log::error("PDF creation failed", [
+                'error' => $e->getMessage(),
+                'pages' => $pages
+            ]);
+            return false;
         }
     }
+
 
     /**
      * استخراج ذكي للمعلومات من الصفحة الأولى فقط
