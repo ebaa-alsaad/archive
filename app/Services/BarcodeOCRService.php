@@ -39,7 +39,7 @@ class BarcodeOCRService
         $this->pdfHash = md5_file($pdfPath);
         $pageCount = $this->getPdfPageCount($pdfPath);
         $upload->update(['total_pages' => $pageCount]);
-        
+
         Log::info("Starting parallel PDF processing", [
             'upload_id' => $upload->id,
             'pages' => $pageCount
@@ -47,10 +47,10 @@ class BarcodeOCRService
 
         // 1. اكتشاف الباركود الفاصل من جميع الصفحات
         $separatorBarcode = $this->detectSeparatorBarcode($pdfPath, $pageCount);
-        
+
         // 2. تقسيم الملف إلى أقسام بناءً على الباركود الفاصل
         $sections = $this->splitPdfIntoSections($pdfPath, $pageCount, $separatorBarcode);
-        
+
         // 3. معالجة متوازية للأقسام
         $createdGroups = $this->processSections($pdfPath, $sections, $separatorBarcode, $upload);
 
@@ -70,10 +70,10 @@ class BarcodeOCRService
     private function detectSeparatorBarcode($pdfPath, $pageCount)
     {
         $barcodeFrequency = [];
-        
+
         // فحص أول 10 صفحات أو كل الصفحات إذا كان العدد أقل
         $sampleSize = min(10, $pageCount);
-        
+
         for ($page = 1; $page <= $sampleSize; $page++) {
             $barcode = $this->readPageBarcode($pdfPath, $page);
             if ($barcode) {
@@ -98,10 +98,10 @@ class BarcodeOCRService
     {
         $sections = [];
         $currentSection = [];
-        
+
         for ($page = 1; $page <= $pageCount; $page++) {
             $barcode = $this->readPageBarcode($pdfPath, $page);
-            
+
             // إذا كان هذا الباركود هو الباركود الفاصل وليس الصفحة الأولى
             if ($barcode === $separatorBarcode && $page > 1) {
                 // حفظ القسم الحالي إذا كان يحتوي على صفحات
@@ -110,11 +110,11 @@ class BarcodeOCRService
                     $currentSection = [];
                 }
             }
-            
+
             // إضافة الصفحة الحالية للقسم
             $currentSection[] = $page;
         }
-        
+
         // إضافة القسم الأخير إذا كان يحتوي على صفحات
         if (!empty($currentSection)) {
             $sections[] = $currentSection;
@@ -141,11 +141,11 @@ class BarcodeOCRService
             $group = $this->createGroupFromPages($pdfPath, $pages, $index, $separatorBarcode, $upload);
             if ($group) {
                 $createdGroups[] = $group;
-                
+
                 // تحديث التقدم
                 $progress = intval((($index + 1) / count($sections)) * 100);
                 Redis::set("upload_progress:{$upload->id}", $progress);
-                
+
                 Log::info("Section processed", [
                     'section_index' => $index,
                     'pages_count' => count($pages),
@@ -174,7 +174,7 @@ class BarcodeOCRService
 
             $directory = "groups";
             $fullDir = storage_path("app/private/{$directory}");
-            
+
             // إنشاء المجلد إذا لم يكن موجوداً
             if (!is_dir($fullDir)) {
                 mkdir($fullDir, 0775, true);
@@ -418,12 +418,12 @@ class BarcodeOCRService
     {
         $cmd = sprintf('zbarimg -q --raw %s 2>/dev/null', escapeshellarg($imagePath));
         exec($cmd, $output, $returnVar);
-        
+
         if ($returnVar === 0 && !empty($output)) {
             $first = trim(is_array($output) ? $output[0] : $output);
             return $first === '' ? null : $first;
         }
-        
+
         return null;
     }
 
@@ -433,7 +433,7 @@ class BarcodeOCRService
     private function generateFilenameWithOCR($pdfPath, $pages, $index, $barcode)
     {
         $firstPage = $pages[0];
-        
+
         // محاولة استخراج النص من الصفحة الأولى
         $content = $this->extractWithPdftotext($pdfPath, $firstPage);
 
@@ -448,7 +448,7 @@ class BarcodeOCRService
 
         // البحث عن معلومات المستند في المحتوى
         $documentInfo = $this->smartDocumentRecognition($content);
-        
+
         if (!empty($documentInfo)) {
             foreach (['قيد', 'فاتورة', 'سند'] as $type) {
                 if (isset($documentInfo[$type])) {
@@ -471,7 +471,7 @@ class BarcodeOCRService
     private function extractWithPdftotext($pdfPath, $page)
     {
         $cacheKey = $this->pdfHash . '::pdftotext::' . $page;
-        
+
         if (isset($this->textCache[$cacheKey])) {
             return $this->textCache[$cacheKey];
         }
@@ -509,7 +509,7 @@ class BarcodeOCRService
     private function extractTextWithOCR($pdfPath, $page)
     {
         $cacheKey = $this->pdfHash . '::ocr::' . $page;
-        
+
         if (isset($this->ocrCache[$cacheKey])) {
             return $this->ocrCache[$cacheKey];
         }
@@ -537,7 +537,7 @@ class BarcodeOCRService
 
             $textFile = $outputFileBase . '.txt';
             $content = file_exists($textFile) ? $this->readAndCleanFile($textFile) : '';
-            
+
             if (file_exists($textFile)) {
                 unlink($textFile);
             }
@@ -546,7 +546,7 @@ class BarcodeOCRService
 
         } catch (Exception $e) {
             Log::warning("OCR extraction failed", [
-                'page' => $page, 
+                'page' => $page,
                 'error' => $e->getMessage()
             ]);
             return $this->ocrCache[$cacheKey] = '';
@@ -561,11 +561,11 @@ class BarcodeOCRService
         if (!file_exists($filepath)) {
             return '';
         }
-        
+
         $content = file_get_contents($filepath);
         $content = trim(preg_replace('/\s+/u', ' ', $content));
         $content = preg_replace('/[^\p{Arabic}\p{L}\p{N}\s\-_\.:]/u', '', $content);
-        
+
         return trim($content);
     }
 
@@ -576,7 +576,7 @@ class BarcodeOCRService
     {
         $patterns = $this->getEnhancedPatterns();
         $matches = [];
-        
+
         foreach ($patterns as $type => $typePatterns) {
             foreach ($typePatterns as $pattern) {
                 if (preg_match($pattern, $content, $match)) {
@@ -585,7 +585,7 @@ class BarcodeOCRService
                 }
             }
         }
-        
+
         return $matches;
     }
 
@@ -642,11 +642,11 @@ class BarcodeOCRService
         if (empty($content)) {
             return true;
         }
-        
+
         preg_match_all('/[^\p{Arabic}\p{N}\s\p{P}]/u', $content, $matches);
         $garbledCount = count($matches[0] ?? []);
         $totalLength = mb_strlen($content);
-        
+
         return $totalLength > 0 && ($garbledCount / $totalLength) > 0.3;
     }
 
@@ -657,17 +657,17 @@ class BarcodeOCRService
     {
         $cmd = 'pdfinfo ' . escapeshellarg($pdfPath) . ' 2>/dev/null';
         exec($cmd, $output, $returnVar);
-        
+
         if ($returnVar !== 0) {
             throw new Exception("Failed to get PDF page count");
         }
-        
+
         foreach ($output as $line) {
             if (preg_match('/Pages:\s*(\d+)/i', $line, $matches)) {
                 return (int)$matches[1];
             }
         }
-        
+
         throw new Exception("Unable to determine PDF page count");
     }
 
@@ -686,7 +686,7 @@ class BarcodeOCRService
         $this->barcodeCache = [];
         $this->textCache = [];
         $this->ocrCache = [];
-        
+
         // تنظيف الملفات المؤقتة القديمة
         $tempDir = storage_path("app/temp");
         if (file_exists($tempDir)) {
@@ -696,7 +696,7 @@ class BarcodeOCRService
                 }
             }
         }
-        
+
         gc_collect_cycles();
     }
 

@@ -13,32 +13,21 @@
     <div id="upload-card" class="bg-white p-8 rounded-2xl shadow-xl border border-gray-100">
         <form id="upload-form" class="space-y-6" enctype="multipart/form-data">
             @csrf
-            <div class="mb-6" x-data="{ isDragging: false }">
+            <div class="mb-6">
                 <input id="file-input" type="file" name="pdf_file" accept="application/pdf" class="hidden" required/>
-                <label for="file-input">
-                    <div id="drop-zone"
-                         @dragover.prevent="isDragging = true"
-                         @dragleave.prevent="isDragging = false"
-                         @drop.prevent="isDragging = false; handleDrop($event)"
-                         :class="isDragging ?
-                             'border-blue-500 bg-blue-50 border-4 scale-[1.02]' :
-                             'border-gray-300 bg-gray-50 hover:bg-gray-100 border-3'"
-                         class="flex flex-col items-center justify-center w-full h-64 border-dashed rounded-2xl cursor-pointer transition-all duration-300 ease-in-out">
-
-                        <div class="flex flex-col items-center justify-center text-center px-6">
-                            <i id="upload-icon"
-                               :class="isDragging ? 'text-blue-600 scale-110' : 'text-blue-500'"
-                               class="fa-solid fa-file-arrow-up text-6xl mb-4 transition-all duration-300"></i>
-                            <p class="mb-2 text-xl text-gray-700 font-bold">
-                                <span class="text-blue-700">اسحب وأفلت ملف PDF</span> أو انقر للتحميل
-                            </p>
-                            <p class="text-sm text-gray-500 mb-2">ملفات PDF فقط</p>
-                            <p class="text-xs text-gray-400">الحد الأقصى 200MB • المعالجة تستغرق عدة دقائق</p>
-                            <p id="file-name" class="mt-4 text-base text-gray-800 font-semibold max-w-md truncate hidden"></p>
-                            <p id="file-size" class="text-sm text-gray-600 hidden"></p>
-                        </div>
+                <div id="drop-zone"
+                     class="flex flex-col items-center justify-center w-full h-64 border-3 border-dashed border-gray-300 bg-gray-50 hover:bg-gray-100 rounded-2xl cursor-pointer transition-all duration-300 ease-in-out">
+                    <div class="flex flex-col items-center justify-center text-center px-6">
+                        <i id="upload-icon" class="fa-solid fa-file-arrow-up text-6xl mb-4 text-blue-500 transition-all duration-300"></i>
+                        <p class="mb-2 text-xl text-gray-700 font-bold">
+                            <span class="text-blue-700">اسحب وأفلت ملف PDF</span> أو انقر للتحميل
+                        </p>
+                        <p class="text-sm text-gray-500 mb-2">ملفات PDF فقط</p>
+                        <p class="text-xs text-gray-400">الحد الأقصى 200MB • المعالجة تستغرق عدة دقائق</p>
+                        <p id="file-name" class="mt-4 text-base text-gray-800 font-semibold max-w-md truncate hidden"></p>
+                        <p id="file-size" class="text-sm text-gray-600 hidden"></p>
                     </div>
-                </label>
+                </div>
             </div>
 
             <!-- معلومات إضافية -->
@@ -158,6 +147,9 @@ const toastContainer = document.getElementById('toast-container');
 
 let currentUploadId = null;
 let pollInterval = null;
+
+// إضافة حالة السحب
+let isDragging = false;
 
 function showToast(message, type = 'info') {
     const colors = {
@@ -302,21 +294,63 @@ function resetToUpload() {
     showToast('يمكنك الآن رفع ملف جديد', 'info');
 }
 
-// أحداث الملف
-fileInput.addEventListener('change', () => updateFileInput(fileInput.files));
-dropZone.addEventListener('click', () => fileInput.click());
+// أحداث الملف - الإصدار المصحح
+fileInput.addEventListener('change', (e) => {
+    e.stopPropagation(); // منع انتشار الحدث
+    updateFileInput(fileInput.files);
+});
 
-function handleDrop(e) {
+// النقر على منطقة السحب
+dropZone.addEventListener('click', (e) => {
+    e.stopPropagation(); // منع انتشار الحدث
+    fileInput.click();
+});
+
+// أحداث السحب والإفلات - الإصدار المصحح
+dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isDragging) {
+        isDragging = true;
+        dropZone.classList.add('border-blue-500', 'bg-blue-50', 'border-4', 'scale-[1.02]');
+        dropZone.classList.remove('border-gray-300', 'bg-gray-50', 'border-3');
+    }
+});
+
+dropZone.addEventListener('dragleave', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (isDragging) {
+        isDragging = false;
+        dropZone.classList.remove('border-blue-500', 'bg-blue-50', 'border-4', 'scale-[1.02]');
+        dropZone.classList.add('border-gray-300', 'bg-gray-50', 'border-3');
+    }
+});
+
+dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (isDragging) {
+        isDragging = false;
+        dropZone.classList.remove('border-blue-500', 'bg-blue-50', 'border-4', 'scale-[1.02]');
+        dropZone.classList.add('border-gray-300', 'bg-gray-50', 'border-3');
+    }
+
     const files = e.dataTransfer.files;
     if (files.length > 0) {
-        fileInput.files = files;
+        // تحديث input الملف مباشرة
+        const dataTransfer = new DataTransfer();
+        dataTransfer.items.add(files[0]);
+        fileInput.files = dataTransfer.files;
+
         updateFileInput(files);
     }
-}
+});
 
-// منع السلوك الافتراضي للسحب والإفلات
+// منع السلوك الافتراضي للسحب والإفلات على document
 ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-    dropZone.addEventListener(eventName, preventDefaults, false);
+    document.addEventListener(eventName, preventDefaults, false);
 });
 
 function preventDefaults(e) {
@@ -491,24 +525,8 @@ function onProcessingFailed(data) {
 
 // الانتقال لصفحة عرض الـ Uploads
 function viewUploads() {
-    window.location.href = '{{ route("uploads.index") }}'; // غير المسار حسب تسمية الراوت عندك
+    window.location.href = '{{ route("uploads.index") }}';
 }
-
-// إعدادات إضافية للـ Alpine.js
-document.addEventListener('alpine:init', () => {
-    Alpine.data('uploadForm', () => ({
-        isDragging: false,
-
-        handleDrop(e) {
-            this.isDragging = false;
-            const files = e.dataTransfer.files;
-            if (files.length > 0) {
-                fileInput.files = files;
-                updateFileInput(files);
-            }
-        }
-    }));
-});
 
 // التنظيف عند مغادرة الصفحة
 window.addEventListener('beforeunload', () => {
