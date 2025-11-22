@@ -215,14 +215,13 @@ function updateFileInput(files) {
 
         infoFilename.textContent = file.name;
         infoFilesize.textContent = formatFileSize(file.size);
-        infoPages.textContent = 'جاري فحص عدد الصفحات...';
         fileInfo.classList.remove('hidden');
 
         archiveButton.disabled = false;
 
         showToast('تم اختيار الملف بنجاح', 'success');
 
-    
+
     }
 }
 

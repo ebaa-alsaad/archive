@@ -2,22 +2,21 @@
 
 namespace App\Jobs;
 
-use Throwable;
 use App\Models\Upload;
-use Illuminate\Bus\Queueable;
 use App\Services\BarcodeOCRService;
-use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Redis;
-use Illuminate\Queue\SerializesModels;
-use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
+use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Redis;
 
 class ProcessPdfJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public $timeout = 1800;
+    public $timeout = 1800; // 30 دقيقة
     public $tries = 3;
 
     protected $upload;
@@ -29,14 +28,14 @@ class ProcessPdfJob implements ShouldQueue
 
     public function handle(BarcodeOCRService $barcodeService)
     {
-        Log::info("🚀 Starting PDF processing job", ['upload_id' => $this->upload->id]);
+        Log::info("🚀 بدء معالجة PDF", ['upload_id' => $this->upload->id]);
 
         $this->upload->update([
             'status' => 'processing',
             'started_at' => now()
         ]);
 
-        Redis::setex("upload_progress:{$this->upload->id}", 3600, 0);
+        Redis::set("upload_progress:{$this->upload->id}", 0);
 
         try {
             $groups = $barcodeService->processPdf($this->upload);
@@ -48,37 +47,36 @@ class ProcessPdfJob implements ShouldQueue
                 'error_message' => null
             ]);
 
-            Redis::setex("upload_progress:{$this->upload->id}", 3600, 100);
+            Redis::set("upload_progress:{$this->upload->id}", 100);
 
-            Log::info("🎉 PDF processed successfully", [
+            Log::info("✅ اكتملت معالجة PDF", [
                 'upload_id' => $this->upload->id,
-                'groups_count' => count($groups),
-                'processing_time' => now()->diffInSeconds($this->upload->started_at)
+                'groups_count' => count($groups)
             ]);
 
-        } catch (Throwable $e) {
-            Log::error("💥 PDF processing job failed", [
+        } catch (\Exception $e) {
+            Log::error("❌ فشلت معالجة PDF", [
                 'upload_id' => $this->upload->id,
                 'error' => $e->getMessage()
             ]);
-            $this->fail($e);
+
+            $this->upload->update([
+                'status' => 'failed',
+                'error_message' => $e->getMessage(),
+                'failed_at' => now()
+            ]);
+
+            Redis::del("upload_progress:{$this->upload->id}");
+
+            throw $e; // إعادة رمي الخطأ للـ queue
         }
     }
 
-    public function failed(Throwable $exception)
+    public function failed(\Throwable $exception)
     {
-        $this->upload->update([
-            'status' => 'failed',
-            'error_message' => $exception->getMessage(),
-            'failed_at' => now()
-        ]);
-
-        Redis::del("upload_progress:{$this->upload->id}");
-
-        Log::error("💥 PDF processing job failed completely", [
+        Log::error("💥 فشل الـ Job تماماً", [
             'upload_id' => $this->upload->id,
-            'error' => $exception->getMessage(),
-            'trace' => $exception->getTraceAsString()
+            'error' => $exception->getMessage()
         ]);
     }
 }

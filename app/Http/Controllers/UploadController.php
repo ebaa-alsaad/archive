@@ -137,7 +137,7 @@ class UploadController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Upload failed', ['error' => $e->getMessage()]);
-            
+
             return response()->json([
                 'success' => false,
                 'message' => 'فشل في رفع الملف: ' . $e->getMessage()
@@ -148,7 +148,7 @@ class UploadController extends Controller
     public function progress($uploadId)
     {
         $progress = Redis::get("upload_progress:{$uploadId}") ?? 0;
-        
+
         return response()->json([
             'progress' => (int)$progress,
             'status' => Upload::find($uploadId)->status ?? 'unknown'
