@@ -2,13 +2,14 @@
 
 namespace App\Http\Controllers;
 
+use ZipArchive;
+use App\Jobs\ProcessPdfJob;
 use Illuminate\Http\Request;
 use App\Models\{Upload, Group};
 use App\Services\BarcodeOCRService;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Storage;
-use ZipArchive;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Storage;
 
 class UploadController extends Controller
 {
@@ -117,7 +118,7 @@ class UploadController extends Controller
         $upload = Upload::create([
             'original_filename' => $file->getClientOriginalName(),
             'stored_filename'   => $storedName,
-            'status'            => 'queued',
+            'status'            => 'pending',
             'user_id'           => auth()->id(),
         ]);
 
