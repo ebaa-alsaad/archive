@@ -145,10 +145,13 @@ class UploadController extends Controller
     }
 
     // endpoint للحصول على التقدم من Redis
-    public function progress($id)
+    public function progress(Upload $upload)
     {
-        $percentage = Redis::get("upload_progress:{$id}") ?? 0;
-        return response()->json(['progress' => (int)$percentage]);
+        $progress = Redis::get("upload_progress:{$upload->id}") ?? 0;
+        return response()->json([
+            'upload_id' => $upload->id,
+            'progress' => (int)$progress
+        ]);
     }
 
 
