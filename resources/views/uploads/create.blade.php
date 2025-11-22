@@ -222,36 +222,8 @@ function updateFileInput(files) {
 
         showToast('تم اختيار الملف بنجاح', 'success');
 
-        // فحص عدد الصفحات (اختياري)
-        getPageCount(file).then(pages => {
-            infoPages.textContent = `${pages} صفحة`;
-        }).catch(() => {
-            infoPages.textContent = 'غير معروف';
-        });
+    
     }
-}
-
-// دالة لفحص عدد الصفحات (اختيارية)
-async function getPageCount(file) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = function(e) {
-            try {
-                const arr = new Uint8Array(e.target.result);
-                const pdfText = new TextDecoder('utf-8').decode(arr);
-                const pageMatch = pdfText.match(/\/Count\s+(\d+)/);
-                if (pageMatch) {
-                    resolve(parseInt(pageMatch[1]));
-                } else {
-                    resolve('?');
-                }
-            } catch (error) {
-                resolve('?');
-            }
-        };
-        reader.onerror = reject;
-        reader.readAsArrayBuffer(file.slice(0, 5000)); // قراءة الجزء الأول فقط
-    });
 }
 
 function resetFileInput() {
