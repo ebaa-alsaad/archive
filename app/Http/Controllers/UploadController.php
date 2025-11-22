@@ -108,51 +108,49 @@ class UploadController extends Controller
 
    public function store(Request $request)
     {
-        // زيادة حدود التحميل للملفات الكبيرة
-        ini_set('upload_max_filesize', '200M');
-        ini_set('post_max_size', '200M');
-        ini_set('max_execution_time', 1800);
-        ini_set('memory_limit', '2048M');
-
         $request->validate([
-            'pdf_file' => 'required|mimes:pdf|max:204800' // 200MB
+            'pdf_file' => 'required|file|mimes:pdf|max:204800' // 200MB
         ]);
 
-        $file = $request->file('pdf_file');
-        $fileSizeMB = round($file->getSize() / 1024 / 1024, 2);
+        try {
+            $file = $request->file('pdf_file');
+            $filename = 'upload_' . time() . '_' . Str::random(8) . '.pdf';
+            $path = $file->storeAs('uploads', $filename, 'private');
 
-        $storedName = $file->store('uploads', 'private');
+            $upload = Upload::create([
+                'original_filename' => $file->getClientOriginalName(),
+                'stored_filename' => $filename,
+                'file_size' => $file->getSize(),
+                'user_id' => auth()->id(),
+                'status' => 'pending'
+            ]);
 
-        $upload = Upload::create([
-            'original_filename' => $file->getClientOriginalName(),
-            'stored_filename' => $storedName,
-            'file_size_mb' => $fileSizeMB,
-            'status' => 'pending',
-            'user_id' => auth()->id(),
-        ]);
+            // تشغيل الـ Job في الخلفية
+            ProcessPdfJob::dispatch($upload)->onQueue('pdf-processing');
 
-        // احفظ تقدم البداية في Redis
-        Redis::set("upload_progress:{$upload->id}", 0);
+            return response()->json([
+                'success' => true,
+                'message' => 'تم رفع الملف بنجاح وجاري المعالجة',
+                'upload_id' => $upload->id
+            ]);
 
-        // أرسل الـ Job للمعالجة الخلفية
-        ProcessPdfJob::dispatch($upload);
-
-        return response()->json([
-            'success' => true,
-            'message' => "تم رفع الملف بنجاح. جاري معالجته...",
-            'upload_id' => $upload->id
-        ]);
+        } catch (\Exception $e) {
+            Log::error('Upload failed', ['error' => $e->getMessage()]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'فشل في رفع الملف: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
-    // endpoint للحصول على التقدم من Redis
     public function progress($uploadId)
     {
-        $upload = Upload::findOrFail($uploadId); 
-        $progress = Redis::get("upload_progress:{$upload->id}") ?? 0;
-
+        $progress = Redis::get("upload_progress:{$uploadId}") ?? 0;
+        
         return response()->json([
-            'upload_id' => $upload->id,
-            'progress' => (int)$progress
+            'progress' => (int)$progress,
+            'status' => Upload::find($uploadId)->status ?? 'unknown'
         ]);
     }
 
