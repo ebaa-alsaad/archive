@@ -120,7 +120,7 @@ class UploadController extends Controller
 
             $upload = Upload::create([
                 'original_filename' => $file->getClientOriginalName(),
-                'stored_filename' => $filename,
+                'stored_filename' => $path,
                 'file_size' => $file->getSize(),
                 'user_id' => auth()->id(),
                 'status' => 'pending'
