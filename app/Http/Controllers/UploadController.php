@@ -107,10 +107,10 @@ class UploadController extends Controller
     public function store(Request $request)
     {
         $request->validate([
-            'pdf' => 'required|mimes:pdf|max:50000'
+            'pdf_file' => 'required|mimes:pdf|max:50000'
         ]);
 
-        $file = $request->file('pdf');
+        $file = $request->file('pdf_file');
         $storedName = time() . "_" . $file->getClientOriginalName();
         $path = $file->storeAs('uploads', $storedName, 'local');
 
