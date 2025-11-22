@@ -109,38 +109,85 @@ class UploadController extends Controller
 
     public function store(Request $request)
     {
-        $request->validate([
-            'pdf_file' => 'required|file|mimes:pdf|max:204800' // 200MB
+        ini_set('upload_max_filesize', '70M');
+        ini_set('post_max_size', '70M');
+        ini_set('max_execution_time', 600);
+        ini_set('max_input_time', 600);
+        ini_set('memory_limit', '512M');
+
+        Log::info('Upload request received', [
+            'has_file' => $request->hasFile('pdf_file'),
+            'file_size' => $request->file('pdf_file')?->getSize(),
+            'file_size_mb' => $request->file('pdf_file') ? round($request->file('pdf_file')->getSize() / 1024 / 1024, 2) : 0
         ]);
 
         try {
-            $file = $request->file('pdf_file');
-            $filename = 'upload_' . time() . '_' . Str::random(8) . '.pdf';
-            $path = $file->storeAs('uploads', $filename, 'private');
-
-            $upload = Upload::create([
-                'original_filename' => $file->getClientOriginalName(),
-                'stored_filename' => $path,
-                'file_size' => $file->getSize(),
-                'user_id' => auth()->id(),
-                'status' => 'pending'
+            $request->validate([
+                'pdf_file' => 'required|mimes:pdf|max:71680'
             ]);
 
-            // تشغيل الـ Job في الخلفية
-            ProcessPdfJob::dispatch($upload)->onQueue('pdf-processing');
+            $file = $request->file('pdf_file');
+            $fileSizeMB = round($file->getSize() / 1024 / 1024, 2);
+
+            $storedName = $file->store('uploads', 'private');
+            $fullPath = Storage::disk('private')->path($storedName);
+
+            // الحصول على عدد الصفحات
+            $pageCount = $this->barcodeService->getPdfPageCount($fullPath);
+
+            // إنشاء سجل الرفع
+            $upload = Upload::create([
+                'original_filename' => $file->getClientOriginalName(),
+                'stored_filename' => $storedName,
+                'total_pages' => $pageCount,
+                'file_size_mb' => $fileSizeMB,
+                'status' => 'processing',
+                'user_id' => auth()->id(),
+            ]);
+
+            // معالجة PDF وتقسيم الأقسام
+            $groups = $this->barcodeService->processPdf($upload);
+
+            // تحديث حالة الرفع
+            $upload->update([
+                'status' => 'completed',
+                'error_message' => null
+            ]);
+
+            $barcodes = [];
+            foreach ($groups as $group) {
+                if ($group instanceof Group && !empty($group->code)) {
+                    $barcodes[] = $group->code;
+                }
+            }
+
+            Log::info('Processing completed successfully');
 
             return response()->json([
                 'success' => true,
-                'message' => 'تم رفع الملف بنجاح وجاري المعالجة',
-                'upload_id' => $upload->id
+                'message' => "تمت معالجة الملف بنجاح ({$fileSizeMB} MB). تم إنشاء " . count($groups) . " قسم.",
+                'barcodes' => $barcodes,
+                'upload_id' => $upload->id,
+                'service_used' => get_class($this->barcodeService),
+                'redirect_url' => route('uploads.show', $upload)
             ]);
 
         } catch (\Exception $e) {
-            Log::error('Upload failed', ['error' => $e->getMessage()]);
+            Log::error('Upload processing failed', [
+                'error_message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            if (isset($upload)) {
+                $upload->update([
+                    'status' => 'failed',
+                    'error_message' => $e->getMessage()
+                ]);
+            }
 
             return response()->json([
                 'success' => false,
-                'message' => 'فشل في رفع الملف: ' . $e->getMessage()
+                'error' => 'فشل في معالجة الملف: ' . $e->getMessage()
             ], 500);
         }
     }
