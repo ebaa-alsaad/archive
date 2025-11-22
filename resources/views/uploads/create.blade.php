@@ -9,6 +9,7 @@
 
     <div id="toast-container" class="fixed top-5 right-5 z-[100] space-y-2 max-w-sm"></div>
 
+    <!-- حالة الرفع الأساسية -->
     <div id="upload-card" class="bg-white p-8 rounded-2xl shadow-xl border border-gray-100">
         <form id="upload-form" class="space-y-6" enctype="multipart/form-data">
             @csrf
@@ -19,13 +20,13 @@
                          @dragover.prevent="isDragging = true"
                          @dragleave.prevent="isDragging = false"
                          @drop.prevent="isDragging = false; handleDrop($event)"
-                         :class="isDragging ? 
-                             'border-blue-500 bg-blue-50 border-4 scale-[1.02]' : 
+                         :class="isDragging ?
+                             'border-blue-500 bg-blue-50 border-4 scale-[1.02]' :
                              'border-gray-300 bg-gray-50 hover:bg-gray-100 border-3'"
                          class="flex flex-col items-center justify-center w-full h-64 border-dashed rounded-2xl cursor-pointer transition-all duration-300 ease-in-out">
 
                         <div class="flex flex-col items-center justify-center text-center px-6">
-                            <i id="upload-icon" 
+                            <i id="upload-icon"
                                :class="isDragging ? 'text-blue-600 scale-110' : 'text-blue-500'"
                                class="fa-solid fa-file-arrow-up text-6xl mb-4 transition-all duration-300"></i>
                             <p class="mb-2 text-xl text-gray-700 font-bold">
@@ -46,9 +47,10 @@
                     <div>
                         <h4 class="font-semibold text-blue-800" id="info-filename"></h4>
                         <p class="text-sm text-blue-600" id="info-filesize"></p>
+                        <p class="text-xs text-blue-500" id="info-pages"></p>
                     </div>
-                    <button type="button" onclick="clearFile()" class="text-red-500 hover:text-red-700">
-                        <i class="fa-solid fa-times"></i>
+                    <button type="button" onclick="clearFile()" class="text-red-500 hover:text-red-700 p-2">
+                        <i class="fa-solid fa-times"></i> إزالة
                     </button>
                 </div>
             </div>
@@ -96,9 +98,27 @@
         <div class="text-center">
             <i class="fa-solid fa-circle-check text-green-500 text-4xl mb-3"></i>
             <h3 class="text-xl font-bold text-green-800 mb-2">تمت المعالجة بنجاح!</h3>
-            <p class="text-green-600 mb-4" id="results-message"></p>
-            <button onclick="resetForm()" class="bg-green-500 text-white px-6 py-2 rounded-lg hover:bg-green-600 transition-colors">
-                رفع ملف جديد
+            <p class="text-green-600 mb-2" id="results-message"></p>
+            <p class="text-green-500 text-sm mb-4" id="results-details"></p>
+            <div class="flex gap-3 justify-center">
+                <button onclick="resetToUpload()" class="bg-green-500 text-white px-6 py-2 rounded-lg hover:bg-green-600 transition-colors">
+                    <i class="fa-solid fa-plus ml-2"></i> رفع ملف جديد
+                </button>
+                <button onclick="viewUploads()" class="bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600 transition-colors">
+                    <i class="fa-solid fa-list ml-2"></i> عرض جميع الملفات
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- حالة الخطأ -->
+    <div id="error-container" class="hidden bg-red-50 p-6 rounded-2xl border border-red-200">
+        <div class="text-center">
+            <i class="fa-solid fa-circle-exclamation text-red-500 text-4xl mb-3"></i>
+            <h3 class="text-xl font-bold text-red-800 mb-2">فشلت المعالجة</h3>
+            <p class="text-red-600 mb-4" id="error-message"></p>
+            <button onclick="resetToUpload()" class="bg-red-500 text-white px-6 py-2 rounded-lg hover:bg-red-600 transition-colors">
+                <i class="fa-solid fa-rotate-left ml-2"></i> المحاولة مرة أخرى
             </button>
         </div>
     </div>
@@ -113,6 +133,7 @@ const dropZone = document.getElementById('drop-zone');
 const fileInfo = document.getElementById('file-info');
 const infoFilename = document.getElementById('info-filename');
 const infoFilesize = document.getElementById('info-filesize');
+const infoPages = document.getElementById('info-pages');
 
 // عناصر التقدم
 const uploadProgressContainer = document.getElementById('upload-progress-container');
@@ -128,6 +149,11 @@ const processingDetails = document.getElementById('processing-details');
 
 const resultsContainer = document.getElementById('results-container');
 const resultsMessage = document.getElementById('results-message');
+const resultsDetails = document.getElementById('results-details');
+
+const errorContainer = document.getElementById('error-container');
+const errorMessage = document.getElementById('error-message');
+
 const toastContainer = document.getElementById('toast-container');
 
 let currentUploadId = null;
@@ -140,7 +166,7 @@ function showToast(message, type = 'info') {
         warning: 'bg-yellow-500 text-white border-yellow-600',
         info: 'bg-blue-500 text-white border-blue-600'
     };
-    
+
     const icons = {
         success: 'fa-circle-check',
         error: 'fa-circle-exclamation',
@@ -154,10 +180,9 @@ function showToast(message, type = 'info') {
         <i class="fa-solid ${icons[type]}"></i>
         <span>${message}</span>
     `;
-    
+
     toastContainer.appendChild(toast);
-    
-    // إزالة التوست بعد 5 ثواني
+
     setTimeout(() => {
         toast.classList.add('animate-fade-out');
         setTimeout(() => toast.remove(), 300);
@@ -176,14 +201,13 @@ function updateFileInput(files) {
     if (files && files.length > 0) {
         const file = files[0];
         const fileSizeMB = file.size / 1024 / 1024;
-        
-        // التحقق من نوع الملف وحجمه
+
         if (file.type !== 'application/pdf') {
             showToast('يجب أن يكون الملف من نوع PDF', 'error');
             resetFileInput();
             return;
         }
-        
+
         if (fileSizeMB > 200) {
             showToast('حجم الملف يجب أن يكون أقل من 200MB', 'error');
             resetFileInput();
@@ -193,18 +217,49 @@ function updateFileInput(files) {
         // عرض معلومات الملف
         fileNameDisplay.textContent = file.name;
         fileNameDisplay.classList.remove('hidden');
-        
+
         fileSizeDisplay.textContent = formatFileSize(file.size);
         fileSizeDisplay.classList.remove('hidden');
-        
+
         infoFilename.textContent = file.name;
         infoFilesize.textContent = formatFileSize(file.size);
+        infoPages.textContent = 'جاري فحص عدد الصفحات...';
         fileInfo.classList.remove('hidden');
-        
+
         archiveButton.disabled = false;
-        
+
         showToast('تم اختيار الملف بنجاح', 'success');
+
+        // فحص عدد الصفحات (اختياري)
+        getPageCount(file).then(pages => {
+            infoPages.textContent = `${pages} صفحة`;
+        }).catch(() => {
+            infoPages.textContent = 'غير معروف';
+        });
     }
+}
+
+// دالة لفحص عدد الصفحات (اختيارية)
+async function getPageCount(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            try {
+                const arr = new Uint8Array(e.target.result);
+                const pdfText = new TextDecoder('utf-8').decode(arr);
+                const pageMatch = pdfText.match(/\/Count\s+(\d+)/);
+                if (pageMatch) {
+                    resolve(parseInt(pageMatch[1]));
+                } else {
+                    resolve('?');
+                }
+            } catch (error) {
+                resolve('?');
+            }
+        };
+        reader.onerror = reject;
+        reader.readAsArrayBuffer(file.slice(0, 5000)); // قراءة الجزء الأول فقط
+    });
 }
 
 function resetFileInput() {
@@ -220,18 +275,31 @@ function clearFile() {
     showToast('تم إزالة الملف', 'info');
 }
 
-function resetForm() {
+// 🔄 الدالة الرئيسية لإعادة التعيين
+function resetToUpload() {
+    // إعادة تعيين كل العناصر
     resetFileInput();
     uploadProgressContainer.classList.add('hidden');
     processingProgressContainer.classList.add('hidden');
     resultsContainer.classList.add('hidden');
+    errorContainer.classList.add('hidden');
+
+    // إعادة تعيين الزر
     archiveButton.disabled = true;
     archiveButton.innerHTML = '<i class="fa-solid fa-paper-plane ml-2"></i> بدء عملية الأرشفة';
-    
+
+    // تنظيف الـ polling
     if (pollInterval) {
         clearInterval(pollInterval);
         pollInterval = null;
     }
+
+    currentUploadId = null;
+
+    // إظهار واجهة الرفع الأساسية
+    document.getElementById('upload-card').classList.remove('hidden');
+
+    showToast('يمكنك الآن رفع ملف جديد', 'info');
 }
 
 // أحداث الملف
@@ -259,7 +327,7 @@ function preventDefaults(e) {
 // إرسال النموذج
 document.getElementById('upload-form').addEventListener('submit', async function(e) {
     e.preventDefault();
-    
+
     if (!fileInput.files.length) {
         showToast('يرجى اختيار ملف PDF أولاً', 'error');
         return;
@@ -281,8 +349,8 @@ document.getElementById('upload-form').addEventListener('submit', async function
         response = await fetch('{{ route("uploads.store") }}', {
             method: 'POST',
             body: formData,
-            headers: { 
-                'X-Requested-With': 'XMLHttpRequest', 
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
                 'Accept': 'application/json',
                 'X-CSRF-TOKEN': '{{ csrf_token() }}'
             }
@@ -293,14 +361,14 @@ document.getElementById('upload-form').addEventListener('submit', async function
         }
 
         const data = await response.json();
-        
+
         if (!data.success) {
             throw new Error(data.message || 'حدث خطأ غير معروف');
         }
 
         currentUploadId = data.upload_id;
         showToast('تم رفع الملف بنجاح، جاري المعالجة...', 'success');
-        
+
         // الانتقال إلى مرحلة المعالجة
         uploadProgressContainer.classList.add('hidden');
         processingProgressContainer.classList.remove('hidden');
@@ -309,7 +377,7 @@ document.getElementById('upload-form').addEventListener('submit', async function
     } catch (error) {
         console.error('Upload error:', error);
         showToast(error.message || 'فشل في رفع الملف', 'error');
-        resetForm();
+        resetToUpload();
     }
 });
 
@@ -330,7 +398,7 @@ function startProgressPolling() {
 
         try {
             const response = await fetch(`/uploads/progress/${currentUploadId}`);
-            
+
             if (!response.ok) {
                 throw new Error('Failed to fetch progress');
             }
@@ -356,9 +424,8 @@ function startProgressPolling() {
 
         } catch (error) {
             console.error('Progress polling error:', error);
-            // نستمر في المحاولة دون إظهار خطأ للمستخدم
         }
-    }, 2000); // تحديث كل 2 ثانية
+    }, 2000);
 }
 
 function updateProgressMessages(progress, status) {
@@ -376,8 +443,7 @@ function updateProgressMessages(progress, status) {
     });
 
     processingProgressMessage.textContent = messages[closestProgress] || 'جاري المعالجة...';
-    
-    // تفاصيل إضافية
+
     if (progress < 30) {
         processingDetails.textContent = 'فحص هيكل الملف والصفحات...';
     } else if (progress < 60) {
@@ -393,32 +459,46 @@ function onProcessingComplete(data) {
     processingProgressBar.style.width = '100%';
     processingProgressPercentage.textContent = '100%';
     processingProgressMessage.textContent = 'تم الانتهاء!';
-    
+
     showToast('تمت معالجة الملف بنجاح', 'success');
-    
+
     // عرض النتائج
     setTimeout(() => {
         processingProgressContainer.classList.add('hidden');
         resultsContainer.classList.remove('hidden');
-        
+
         const groupsCount = data.groups_count || 0;
+        const totalPages = data.total_pages || 0;
+
         resultsMessage.textContent = `تم إنشاء ${groupsCount} مجموعة بنجاح`;
-        
-        archiveButton.disabled = false;
-        archiveButton.innerHTML = '<i class="fa-solid fa-paper-plane ml-2"></i> بدء عملية الأرشفة';
+        resultsDetails.textContent = `من أصل ${totalPages} صفحة`;
+
+        // إخفاء واجهة الرفع الأساسية
+        document.getElementById('upload-card').classList.add('hidden');
+
     }, 1000);
 }
 
 function onProcessingFailed(data) {
     showToast(data.error_message || 'فشلت معالجة الملف', 'error');
-    resetForm();
+
+    // عرض رسالة الخطأ
+    errorMessage.textContent = data.error_message || 'حدث خطأ غير معروف أثناء المعالجة';
+    processingProgressContainer.classList.add('hidden');
+    errorContainer.classList.remove('hidden');
+    document.getElementById('upload-card').classList.add('hidden');
+}
+
+// الانتقال لصفحة عرض الـ Uploads
+function viewUploads() {
+    window.location.href = '{{ route("uploads.index") }}'; // غير المسار حسب تسمية الراوت عندك
 }
 
 // إعدادات إضافية للـ Alpine.js
 document.addEventListener('alpine:init', () => {
     Alpine.data('uploadForm', () => ({
         isDragging: false,
-        
+
         handleDrop(e) {
             this.isDragging = false;
             const files = e.dataTransfer.files;
@@ -428,6 +508,13 @@ document.addEventListener('alpine:init', () => {
             }
         }
     }));
+});
+
+// التنظيف عند مغادرة الصفحة
+window.addEventListener('beforeunload', () => {
+    if (pollInterval) {
+        clearInterval(pollInterval);
+    }
 });
 </script>
 
