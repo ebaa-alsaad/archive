@@ -3,37 +3,66 @@
 namespace App\Jobs;
 
 use App\Models\Upload;
+use App\Models\Group;
 use App\Services\BarcodeOCRService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
-use Illuminate\Foundation\Bus\Dispatchable;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Redis;
 
 class ProcessPdfJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public $uploadId;
+    protected $upload;
 
-    public function __construct($uploadId)
+    public function __construct(Upload $upload)
     {
-        $this->uploadId = $uploadId;
+        $this->upload = $upload;
     }
 
-    public function handle()
+    public function handle(BarcodeOCRService $barcodeService)
     {
-        $upload = Upload::findOrFail($this->uploadId);
-
-        $upload->update(['status' => 'processing']);
+        $this->upload->update(['status' => 'processing']);
+        Redis::set("upload_progress:{$this->upload->id}", 1);
 
         try {
-            $service = new BarcodeOCRService();
-            $service->processPdf(storage_path('app/uploads/' . $upload->stored_filename), $upload);
-            $upload->update(['status' => 'done']);
+            $groups = $barcodeService->processPdf($this->upload);
+
+            // تحديث progress تدريجي على Redis
+            foreach ($groups as $i => $group) {
+                $percent = intval((($i+1)/count($groups)) * 100);
+                Redis::set("upload_progress:{$this->upload->id}", $percent);
+            }
+
+            $this->upload->update([
+                'status' => 'completed',
+                'total_pages' => $barcodeService->getPdfPageCount(
+                    storage_path("app/private/{$this->upload->stored_filename}")
+                ),
+                'error_message' => null
+            ]);
+
+            Redis::set("upload_progress:{$this->upload->id}", 100);
+
+            Log::info("PDF processed successfully", [
+                'upload_id' => $this->upload->id,
+                'groups_count' => count($groups)
+            ]);
+
         } catch (\Exception $e) {
-            $upload->update([
+            $this->upload->update([
                 'status' => 'failed',
+                'error_message' => $e->getMessage()
+            ]);
+
+            Redis::del("upload_progress:{$this->upload->id}");
+            Log::error("PDF processing failed", [
+                'upload_id' => $this->upload->id,
+                'error' => $e->getMessage()
             ]);
         }
     }

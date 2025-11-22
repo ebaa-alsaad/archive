@@ -9,6 +9,7 @@ use App\Models\{Upload, Group};
 use App\Services\BarcodeOCRService;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Facades\Storage;
 
 class UploadController extends Controller
@@ -105,31 +106,53 @@ class UploadController extends Controller
         return redirect()->back()->with('error', 'حدث خطأ أثناء إنشاء ملف ZIP.');
     }
 
-    public function store(Request $request)
+   public function store(Request $request)
     {
+        // زيادة حدود التحميل للملفات الكبيرة
+        ini_set('upload_max_filesize', '200M');
+        ini_set('post_max_size', '200M');
+        ini_set('max_execution_time', 1800);
+        ini_set('memory_limit', '2048M');
+
         $request->validate([
-            'pdf_file' => 'required|mimes:pdf|max:50000'
+            'pdf_file' => 'required|mimes:pdf|max:204800' // 200MB
         ]);
 
         $file = $request->file('pdf_file');
-        $storedName = time() . "_" . $file->getClientOriginalName();
-        $path = $file->storeAs('uploads', $storedName, 'local');
+        $fileSizeMB = round($file->getSize() / 1024 / 1024, 2);
+
+        $storedName = $file->store('uploads', 'private');
 
         $upload = Upload::create([
             'original_filename' => $file->getClientOriginalName(),
-            'stored_filename'   => $storedName,
-            'status'            => 'pending',
-            'user_id'           => auth()->id(),
+            'stored_filename' => $storedName,
+            'file_size_mb' => $fileSizeMB,
+            'status' => 'pending',
+            'user_id' => auth()->id(),
         ]);
 
-        ProcessPdfJob::dispatch($upload->id);
+        // احفظ تقدم البداية في Redis
+        Redis::set("upload_progress:{$upload->id}", 0);
+
+        // أرسل الـ Job للمعالجة الخلفية
+        ProcessPdfJob::dispatch($upload);
 
         return response()->json([
             'success' => true,
-            'message' => 'تم رفع الملف وسيبدأ المعالجة فوراً...',
+            'message' => "تم رفع الملف بنجاح. جاري معالجته...",
             'upload_id' => $upload->id
         ]);
     }
+
+    // endpoint للحصول على التقدم من Redis
+    public function progress($id)
+    {
+        $percentage = Redis::get("upload_progress:{$id}") ?? 0;
+        return response()->json(['progress' => (int)$percentage]);
+    }
+
+
+
 
     public function destroy(Upload $upload)
     {
