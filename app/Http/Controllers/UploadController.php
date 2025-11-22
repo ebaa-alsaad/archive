@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use ZipArchive;
 use App\Jobs\ProcessPdfJob;
+use Illuminate\Support\Str;
 use Illuminate\Http\Request;
 use App\Models\{Upload, Group};
 use App\Services\BarcodeOCRService;
