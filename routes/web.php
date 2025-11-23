@@ -32,7 +32,7 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/{upload}/status', 'checkStatus')->name('status');
         Route::get('/uploaded-file/{upload}', 'showFile')->name('show_file');
         Route::get('/{upload}/download-all',  'downloadAllGroupsZip')->name('download_all_groups');
-        Route::get('/progress/{uploadId}', 'progress')->name('progress');
+        Route::post('/{upload}/process','process')->name('process');
     });
 
      // ----------------------

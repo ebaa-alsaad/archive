@@ -118,7 +118,6 @@ class UploadController extends Controller
         Log::info('Upload request received', [
             'has_file' => $request->hasFile('pdf_file'),
             'file_size' => $request->file('pdf_file')?->getSize(),
-            'file_size_mb' => $request->file('pdf_file') ? round($request->file('pdf_file')->getSize() / 1024 / 1024, 2) : 0
         ]);
 
         try {
@@ -132,23 +131,60 @@ class UploadController extends Controller
             $storedName = $file->store('uploads', 'private');
             $fullPath = Storage::disk('private')->path($storedName);
 
-            // الحصول على عدد الصفحات
-            $pageCount = $this->barcodeService->getPdfPageCount($fullPath);
-
-            // إنشاء سجل الرفع
+            // إنشاء سجل الرفع مباشرة
             $upload = Upload::create([
                 'original_filename' => $file->getClientOriginalName(),
                 'stored_filename' => $storedName,
-                'total_pages' => $pageCount,
+                'total_pages' => 0, // سيتم تحديثه لاحقاً
                 'file_size_mb' => $fileSizeMB,
                 'status' => 'processing',
                 'user_id' => auth()->id(),
             ]);
 
-            // معالجة PDF وتقسيم الأقسام
+            // إرجاع الرد فوراً
+            return response()->json([
+                'success' => true,
+                'message' => "تم رفع الملف بنجاح ({$fileSizeMB} MB). جاري المعالجة...",
+                'upload_id' => $upload->id,
+                'status' => 'processing'
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Upload failed', [
+                'error_message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'error' => 'فشل في رفع الملف: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    // دالة جديدة للمعالجة
+    public function process($uploadId)
+    {
+        try {
+            $upload = Upload::findOrFail($uploadId);
+            
+            if ($upload->status !== 'processing') {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'الملف ليس في حالة معالجة'
+                ]);
+            }
+
+            $fullPath = Storage::disk('private')->path($upload->stored_filename);
+            
+            // الحصول على عدد الصفحات
+            $pageCount = $this->barcodeService->getPdfPageCount($fullPath);
+            $upload->update(['total_pages' => $pageCount]);
+
+            // معالجة PDF
             $groups = $this->barcodeService->processPdf($upload);
 
-            // تحديث حالة الرفع
+            // تحديث الحالة
             $upload->update([
                 'status' => 'completed',
                 'error_message' => null
@@ -165,17 +201,16 @@ class UploadController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => "تمت معالجة الملف بنجاح ({$fileSizeMB} MB). تم إنشاء " . count($groups) . " قسم.",
-                'barcodes' => $barcodes,
-                'upload_id' => $upload->id,
-                'service_used' => get_class($this->barcodeService),
-                'redirect_url' => route('uploads.show', $upload)
+                'message' => "تمت معالجة الملف بنجاح. تم إنشاء " . count($groups) . " قسم.",
+                'groups_count' => count($groups),
+                'total_pages' => $pageCount,
+                'barcodes' => $barcodes
             ]);
 
         } catch (\Exception $e) {
-            Log::error('Upload processing failed', [
-                'error_message' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+            Log::error('Processing failed', [
+                'upload_id' => $uploadId,
+                'error_message' => $e->getMessage()
             ]);
 
             if (isset($upload)) {
@@ -187,21 +222,42 @@ class UploadController extends Controller
 
             return response()->json([
                 'success' => false,
-                'error' => 'فشل في معالجة الملف: ' . $e->getMessage()
+                'error' => 'فشل في المعالجة: ' . $e->getMessage()
             ], 500);
         }
     }
 
-    public function progress($uploadId)
+    // دالة للتحقق من الحالة فقط
+    public function checkStatus($uploadId)
     {
-        $progress = Redis::get("upload_progress:{$uploadId}") ?? 0;
-        $message = Redis::get("upload_message:{$uploadId}") ?? 'جاري المعالجة...';
+        $upload = Upload::find($uploadId);
+        
+        if (!$upload) {
+            return response()->json([
+                'success' => false,
+                'error' => 'الرفع غير موجود'
+            ]);
+        }
 
         return response()->json([
-            'progress' => (int)$progress,
-            'message' => $message,
-            'status' => Upload::find($uploadId)->status ?? 'unknown'
+            'success' => true,
+            'status' => $upload->status,
+            'message' => $this->getStatusMessage($upload->status),
+            'groups_count' => $upload->groups()->count(),
+            'total_pages' => $upload->total_pages
         ]);
+    }
+
+    private function getStatusMessage($status)
+    {
+        $messages = [
+            'processing' => 'جاري معالجة الملف...',
+            'completed' => 'تمت المعالجة بنجاح',
+            'failed' => 'فشلت المعالجة',
+            'queued' => 'في قائمة الانتظار'
+        ];
+        
+        return $messages[$status] ?? 'حالة غير معروفة';
     }
 
     public function destroy(Upload $upload)

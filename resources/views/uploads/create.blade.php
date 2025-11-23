@@ -122,36 +122,16 @@ const dropZone = document.getElementById('drop-zone');
 const fileInfo = document.getElementById('file-info');
 const infoFilename = document.getElementById('info-filename');
 const infoFilesize = document.getElementById('info-filesize');
-const infoPages = document.getElementById('info-pages');
 
-// عناصر التقدم
 const uploadProgressContainer = document.getElementById('upload-progress-container');
-const uploadProgressBar = document.getElementById('upload-progress-bar');
-const uploadProgressPercentage = document.getElementById('upload-progress-percentage');
-const uploadProgressMessage = document.getElementById('upload-progress-message');
-
 const processingProgressContainer = document.getElementById('processing-progress-container');
-const processingProgressBar = document.getElementById('processing-progress-bar');
-const processingProgressPercentage = document.getElementById('processing-progress-percentage');
-const processingProgressMessage = document.getElementById('processing-progress-message');
-const processingDetails = document.getElementById('processing-details');
-
 const resultsContainer = document.getElementById('results-container');
-const resultsMessage = document.getElementById('results-message');
-const resultsDetails = document.getElementById('results-details');
-
 const errorContainer = document.getElementById('error-container');
-const errorMessage = document.getElementById('error-message');
 
 const toastContainer = document.getElementById('toast-container');
 
 let currentUploadId = null;
-let pollInterval = null;
-let estimatedProgress = 0;
-let progressStartTime = null;
-
-// إضافة حالة السحب
-let isDragging = false;
+let statusInterval = null;
 
 function showToast(message, type = 'info') {
     const colors = {
@@ -208,7 +188,6 @@ function updateFileInput(files) {
             return;
         }
 
-        // عرض معلومات الملف
         fileNameDisplay.textContent = file.name;
         fileNameDisplay.classList.remove('hidden');
 
@@ -220,7 +199,6 @@ function updateFileInput(files) {
         fileInfo.classList.remove('hidden');
 
         archiveButton.disabled = false;
-
         showToast('تم اختيار الملف بنجاح', 'success');
     }
 }
@@ -238,170 +216,63 @@ function clearFile() {
     showToast('تم إزالة الملف', 'info');
 }
 
-// 🔄 الدالة الرئيسية لإعادة التعيين
 function resetToUpload() {
-    // إعادة تعيين كل العناصر
     resetFileInput();
     uploadProgressContainer.classList.add('hidden');
     processingProgressContainer.classList.add('hidden');
     resultsContainer.classList.add('hidden');
     errorContainer.classList.add('hidden');
 
-    // إعادة تعيين الزر
     archiveButton.disabled = true;
     archiveButton.innerHTML = '<i class="fa-solid fa-paper-plane ml-2"></i> بدء عملية الأرشفة';
 
-    // تنظيف الـ polling
-    if (pollInterval) {
-        clearInterval(pollInterval);
-        pollInterval = null;
+    if (statusInterval) {
+        clearInterval(statusInterval);
+        statusInterval = null;
     }
 
     currentUploadId = null;
-    estimatedProgress = 0;
-    progressStartTime = null;
-
-    // إظهار واجهة الرفع الأساسية
     document.getElementById('upload-card').classList.remove('hidden');
-
-    showToast('يمكنك الآن رفع ملف جديد', 'info');
 }
 
-// أحداث الملف - الإصدار المصحح
+// أحداث السحب والإفلات
 fileInput.addEventListener('change', (e) => {
-    e.stopPropagation(); // منع انتشار الحدث
+    e.stopPropagation();
     updateFileInput(fileInput.files);
 });
 
-// النقر على منطقة السحب
 dropZone.addEventListener('click', (e) => {
-    e.stopPropagation(); // منع انتشار الحدث
+    e.stopPropagation();
     fileInput.click();
 });
 
-// أحداث السحب والإفلات - الإصدار المصحح
 dropZone.addEventListener('dragover', (e) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!isDragging) {
-        isDragging = true;
-        dropZone.classList.add('border-blue-500', 'bg-blue-50', 'border-4', 'scale-[1.02]');
-        dropZone.classList.remove('border-gray-300', 'bg-gray-50', 'border-3');
-    }
+    dropZone.classList.add('border-blue-500', 'bg-blue-50');
 });
 
 dropZone.addEventListener('dragleave', (e) => {
     e.preventDefault();
     e.stopPropagation();
-    if (isDragging) {
-        isDragging = false;
-        dropZone.classList.remove('border-blue-500', 'bg-blue-50', 'border-4', 'scale-[1.02]');
-        dropZone.classList.add('border-gray-300', 'bg-gray-50', 'border-3');
-    }
+    dropZone.classList.remove('border-blue-500', 'bg-blue-50');
 });
 
 dropZone.addEventListener('drop', (e) => {
     e.preventDefault();
     e.stopPropagation();
-
-    if (isDragging) {
-        isDragging = false;
-        dropZone.classList.remove('border-blue-500', 'bg-blue-50', 'border-4', 'scale-[1.02]');
-        dropZone.classList.add('border-gray-300', 'bg-gray-50', 'border-3');
-    }
+    dropZone.classList.remove('border-blue-500', 'bg-blue-50');
 
     const files = e.dataTransfer.files;
     if (files.length > 0) {
-        // تحديث input الملف مباشرة
         const dataTransfer = new DataTransfer();
         dataTransfer.items.add(files[0]);
         fileInput.files = dataTransfer.files;
-
         updateFileInput(files);
     }
 });
 
-// منع السلوك الافتراضي للسحب والإفلات على document
-['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-    document.addEventListener(eventName, preventDefaults, false);
-});
-
-function preventDefaults(e) {
-    e.preventDefault();
-    e.stopPropagation();
-}
-
-// ✅ دالة fetch مع retry و timeout
-async function fetchWithRetry(url, options, retries = 3, timeout = 120000) {
-    for (let i = 0; i < retries; i++) {
-        try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), timeout);
-
-            options.signal = controller.signal;
-
-            const response = await fetch(url, options);
-            clearTimeout(timeoutId);
-
-            return response;
-        } catch (error) {
-            console.log(`Attempt ${i + 1} failed:`, error);
-
-            if (i === retries - 1) {
-                if (error.name === 'AbortError') {
-                    throw new Error('انتهت مهلة الاتصال بالخادم');
-                }
-                throw error;
-            }
-
-            // انتظار تصاعدي قبل إعادة المحاولة
-            await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
-        }
-    }
-}
-
-// ✅ تحديث شريط تقدم الرفع الحقيقي باستخدام XMLHttpRequest
-function uploadWithProgress(formData, onProgress, onComplete, onError) {
-    const xhr = new XMLHttpRequest();
-    
-    xhr.upload.addEventListener('progress', function(e) {
-        if (e.lengthComputable) {
-            const percentComplete = (e.loaded / e.total) * 100;
-            onProgress(percentComplete);
-        }
-    });
-    
-    xhr.addEventListener('load', function() {
-        if (xhr.status >= 200 && xhr.status < 300) {
-            try {
-                const data = JSON.parse(xhr.responseText);
-                onComplete(data);
-            } catch (e) {
-                onError('فشل في تحليل الاستجابة من الخادم');
-            }
-        } else {
-            onError(`خطأ في الخادم: ${xhr.status}`);
-        }
-    });
-    
-    xhr.addEventListener('error', function() {
-        onError('فشل في الاتصال بالخادم');
-    });
-    
-    xhr.addEventListener('timeout', function() {
-        onError('انتهت مهلة الاتصال');
-    });
-    
-    xhr.open('POST', '{{ route("uploads.store") }}');
-    xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
-    xhr.setRequestHeader('X-CSRF-TOKEN', '{{ csrf_token() }}');
-    xhr.timeout = 120000;
-    xhr.send(formData);
-    
-    return xhr;
-}
-
-// إرسال النموذج - الإصدار المحسن مع تقدم الرفع الحقيقي
+// الإرسال المبسط
 document.getElementById('upload-form').addEventListener('submit', async function(e) {
     e.preventDefault();
 
@@ -410,265 +281,159 @@ document.getElementById('upload-form').addEventListener('submit', async function
         return;
     }
 
-    // إعداد الواجهة
     archiveButton.disabled = true;
-    archiveButton.innerHTML = '<i class="fa-solid fa-spinner fa-spin ml-2"></i> جاري البدء...';
-    resetProgress();
+    archiveButton.innerHTML = '<i class="fa-solid fa-spinner fa-spin ml-2"></i> جاري الرفع...';
 
     const formData = new FormData(this);
 
     try {
-        // بدء رفع الملف مع تقدم حقيقي
+        // عرض حالة الرفع
         uploadProgressContainer.classList.remove('hidden');
-        uploadProgressMessage.textContent = 'جاري رفع الملف... 0%';
 
-        // استخدام XMLHttpRequest لتتبع تقدم الرفع
-        uploadWithProgress(
-            formData,
-            // onProgress
-            (percent) => {
-                const roundedPercent = Math.round(percent);
-                uploadProgressBar.style.width = percent + '%';
-                uploadProgressPercentage.textContent = roundedPercent + '%';
-                uploadProgressMessage.textContent = `جاري رفع الملف... ${roundedPercent}%`;
-                
-                if (percent >= 100) {
-                    uploadProgressMessage.textContent = 'جاري معالجة الملف...';
-                }
-            },
-            // onComplete
-            (data) => {
-                if (!data.success) {
-                    throw new Error(data.error || data.message || 'حدث خطأ غير معروف');
-                }
-
-                currentUploadId = data.upload_id;
-                showToast('تم رفع الملف بنجاح، جاري المعالجة...', 'success');
-
-                // الانتقال إلى مرحلة المعالجة
-                uploadProgressContainer.classList.add('hidden');
-                processingProgressContainer.classList.remove('hidden');
-                startProgressPolling();
-            },
-            // onError
-            (error) => {
-                throw new Error(error);
+        // الرفع العادي
+        const response = await fetch('{{ route("uploads.store") }}', {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-CSRF-TOKEN': '{{ csrf_token() }}'
             }
-        );
+        });
+
+        const data = await response.json();
+
+        if (!data.success) {
+            throw new Error(data.error || 'حدث خطأ غير معروف');
+        }
+
+        currentUploadId = data.upload_id;
+        showToast('تم الرفع بنجاح، جاري المعالجة...', 'success');
+
+        // بدء المعالجة
+        uploadProgressContainer.classList.add('hidden');
+        processingProgressContainer.classList.remove('hidden');
+        
+        startProcessing();
 
     } catch (error) {
         console.error('Upload error:', error);
-
-        // ✅ رسائل خطأ أكثر وضوحاً
-        let errorMessage = error.message;
-        if (error.name === 'TypeError' && error.message.includes('fetch')) {
-            errorMessage = 'فشل في الاتصال بالخادم. يرجى التحقق من اتصال الإنترنت والمحاولة مرة أخرى.';
-        } else if (error.message.includes('timeout')) {
-            errorMessage = 'انتهت مهلة الاتصال. يرجى المحاولة مرة أخرى.';
-        }
-
-        showToast(errorMessage, 'error');
+        showToast(error.message, 'error');
         resetToUpload();
     }
 });
 
-function resetProgress() {
-    uploadProgressBar.style.width = '0%';
-    uploadProgressPercentage.textContent = '0%';
-    processingProgressBar.style.width = '0%';
-    processingProgressPercentage.textContent = '0%';
+// بدء المعالجة
+async function startProcessing() {
+    if (!currentUploadId) return;
+
+    try {
+        // بدء المعالجة في الخادم
+        const processResponse = await fetch(`/uploads/${currentUploadId}/process`, {
+            method: 'POST',
+            headers: {
+                'X-CSRF-TOKEN': '{{ csrf_token() }}',
+                'Accept': 'application/json'
+            }
+        });
+
+        const processData = await processResponse.json();
+
+        if (!processData.success) {
+            throw new Error(processData.error || 'فشلت المعالجة');
+        }
+
+        // إذا نجحت المعالجة مباشرة
+        showToast('تمت المعالجة بنجاح!', 'success');
+        showResults(processData);
+
+    } catch (error) {
+        console.error('Processing error:', error);
+        
+        // إذا فشلت المعالجة، تتبع الحالة
+        startStatusChecking();
+    }
 }
 
-function startProgressPolling() {
-    if (pollInterval) {
-        clearInterval(pollInterval);
+// تتبع الحالة
+function startStatusChecking() {
+    if (statusInterval) {
+        clearInterval(statusInterval);
     }
 
-    progressStartTime = Date.now();
-    estimatedProgress = 5; // البدء من 5%
-
-    pollInterval = setInterval(async () => {
+    statusInterval = setInterval(async () => {
         if (!currentUploadId) return;
 
         try {
-            const response = await fetch(`/uploads/progress/${currentUploadId}`);
-            
-            if (!response.ok) {
-                throw new Error('Failed to fetch progress');
-            }
-
+            const response = await fetch(`/uploads/${currentUploadId}/status`);
             const data = await response.json();
-            const progress = data.progress || 0;
-            const status = data.status || 'processing';
-            const message = data.message || 'جاري المعالجة...';
-            const redisConnected = data.redis_connected !== false;
 
-            console.log('Progress update:', { 
-                progress, 
-                status, 
-                message, 
-                redisConnected,
-                fallback: data.fallback 
-            });
-
-            // ✅ تحديث الواجهة بغض النظر عن القيمة
-            let displayProgress = progress;
-            
-            // إذا كان التقدم 0 أو Redis مش شغال، استخدم التقدير
-            if ((progress === 0 && status === 'processing') || !redisConnected || data.fallback) {
-                displayProgress = estimateProgressBasedOnTime();
-                processingDetails.textContent = 'جاري المعالجة (وضع تقديري)...';
-            } else {
-                displayProgress = progress;
-                processingDetails.textContent = getProgressDetails(progress);
+            if (!data.success) {
+                throw new Error(data.error || 'خطأ في التحقق من الحالة');
             }
 
-            processingProgressBar.style.width = displayProgress + '%';
-            processingProgressPercentage.textContent = Math.round(displayProgress) + '%';
-            processingProgressMessage.textContent = message;
+            // تحديث الواجهة حسب الحالة
+            updateProcessingStatus(data);
 
-            if (progress >= 100 || status === 'completed') {
-                clearInterval(pollInterval);
-                onProcessingComplete(data);
-            } else if (status === 'failed') {
-                clearInterval(pollInterval);
-                onProcessingFailed(data);
+            if (data.status === 'completed') {
+                clearInterval(statusInterval);
+                showResults(data);
+            } else if (data.status === 'failed') {
+                clearInterval(statusInterval);
+                showError(data.message || 'فشلت المعالجة');
             }
 
         } catch (error) {
-            console.error('Progress polling error:', error);
-            // ✅ في حالة الخطأ، استمر في عرض تقدم تقديري
-            const estimated = estimateProgressBasedOnTime();
-            processingProgressBar.style.width = estimated + '%';
-            processingProgressPercentage.textContent = Math.round(estimated) + '%';
-            processingProgressMessage.textContent = 'جاري المعالجة...';
-            processingDetails.textContent = 'الاتصال بالخادم...';
+            console.error('Status check error:', error);
         }
-    }, 2000);
+    }, 3000);
 }
 
-// ✅ تقدير التقدم بناءً على الوقت المنقضي
-function estimateProgressBasedOnTime() {
-    if (!progressStartTime) return 5;
+function updateProcessingStatus(data) {
+    const statusElement = document.getElementById('processing-progress-message');
+    const detailsElement = document.getElementById('processing-details');
     
-    const elapsed = Date.now() - progressStartTime;
-    const elapsedMinutes = elapsed / (1000 * 60);
+    if (statusElement) {
+        statusElement.textContent = data.message || 'جاري المعالجة...';
+    }
     
-    // تقدير أن العملية تستغرق 2-5 دقائق كحد أقصى
-    let estimated = 5 + (elapsedMinutes / 3) * 95;
-    
-    // لا تتجاوز 95% حتى نتحقق من الاكتمال الفعلي
-    estimated = Math.min(95, estimated);
-    estimatedProgress = Math.max(estimatedProgress, estimated);
-    
-    return Math.round(estimatedProgress);
-}
-
-// ✅ الحصول على تفاصيل التقدم
-function getProgressDetails(progress) {
-    if (progress < 20) {
-        return 'تهيئة الملف وفحص الهيكل...';
-    } else if (progress < 40) {
-        return 'استخراج الباركود من الصفحات...';
-    } else if (progress < 60) {
-        return 'تقسيم المستند إلى مجموعات...';
-    } else if (progress < 80) {
-        return 'إنشاء ملفات PDF للمجموعات...';
-    } else if (progress < 95) {
-        return 'المراحل النهائية للحفظ...';
-    } else {
-        return 'جاري الانتهاء...';
+    if (detailsElement) {
+        if (data.status === 'processing') {
+            detailsElement.textContent = 'قد تستغرق العملية عدة دقائق...';
+        } else if (data.status === 'completed') {
+            detailsElement.textContent = 'جاري تحضير النتائج...';
+        }
     }
 }
 
-function onProcessingComplete(data) {
-    processingProgressBar.style.width = '100%';
-    processingProgressPercentage.textContent = '100%';
-    processingProgressMessage.textContent = 'تم الانتهاء بنجاح!';
-    processingDetails.textContent = 'جاري تحضير النتائج...';
+function showResults(data) {
+    processingProgressContainer.classList.add('hidden');
+    resultsContainer.classList.remove('hidden');
+    document.getElementById('upload-card').classList.add('hidden');
 
-    showToast('تمت معالجة الملف بنجاح', 'success');
+    const groupsCount = data.groups_count || 0;
+    const totalPages = data.total_pages || 0;
 
-    // الانتقال للنتائج بعد تأخير
-    setTimeout(() => {
-        processingProgressContainer.classList.add('hidden');
-        resultsContainer.classList.remove('hidden');
-
-        const groupsCount = data.groups_count || 0;
-        const totalPages = data.total_pages || 0;
-
-        resultsMessage.textContent = `تم إنشاء ${groupsCount} مجموعة بنجاح`;
-        resultsDetails.textContent = `من أصل ${totalPages} صفحة`;
-
-        document.getElementById('upload-card').classList.add('hidden');
-        
-        // ✅ إضافة معلومات إضافية إذا موجودة
-        if (data.barcodes && data.barcodes.length > 0) {
-            resultsDetails.innerHTML += `<br><small>تم العثور على ${data.barcodes.length} باركود</small>`;
-        }
-        
-    }, 1500);
+    document.getElementById('results-message').textContent = 
+        `تم إنشاء ${groupsCount} مجموعة بنجاح`;
+    document.getElementById('results-details').textContent = 
+        `من أصل ${totalPages} صفحة`;
 }
 
-function onProcessingFailed(data) {
-    showToast(data.error_message || 'فشلت معالجة الملف', 'error');
-
-    // عرض رسالة الخطأ
-    const errorMsg = data.error_message || data.error || 'حدث خطأ غير معروف أثناء المعالجة';
-    errorMessage.textContent = errorMsg;
+function showError(message) {
     processingProgressContainer.classList.add('hidden');
     errorContainer.classList.remove('hidden');
     document.getElementById('upload-card').classList.add('hidden');
+    document.getElementById('error-message').textContent = message;
 }
 
-// الانتقال لصفحة عرض الـ Uploads
 function viewUploads() {
     window.location.href = '{{ route("uploads.index") }}';
 }
 
-// التنظيف عند مغادرة الصفحة
+// التنظيف
 window.addEventListener('beforeunload', () => {
-    if (pollInterval) {
-        clearInterval(pollInterval);
+    if (statusInterval) {
+        clearInterval(statusInterval);
     }
-});
-
-// ✅ إضافة تأثيرات CSS ديناميكية
-function addProgressAnimations() {
-    const style = document.createElement('style');
-    style.textContent = `
-        #processing-progress-bar {
-            background: linear-gradient(90deg, #10b981, #34d399, #10b981);
-            background-size: 200% 100%;
-            animation: shimmer 2s infinite;
-            transition: width 0.5s ease-out;
-        }
-        
-        #upload-progress-bar {
-            transition: width 0.3s ease-out;
-        }
-        
-        @keyframes shimmer {
-            0% { background-position: -200% 0; }
-            100% { background-position: 200% 0; }
-        }
-        
-        .pulse-upload {
-            animation: pulse 2s infinite;
-        }
-        
-        @keyframes pulse {
-            0% { opacity: 1; }
-            50% { opacity: 0.7; }
-            100% { opacity: 1; }
-        }
-    `;
-    document.head.appendChild(style);
-}
-
-// تهيئة التأثيرات عند تحميل الصفحة
-document.addEventListener('DOMContentLoaded', function() {
-    addProgressAnimations();
 });
 </script>
 
@@ -699,21 +464,10 @@ document.addEventListener('DOMContentLoaded', function() {
     border-color: #3b82f6;
     background-color: #f8fafc;
 }
-/* إضافة تأثيرات للشريط التقدم */
-#processing-progress-bar {
-    background: linear-gradient(90deg, #10b981, #34d399, #10b981);
-    background-size: 200% 100%;
-    animation: shimmer 2s infinite;
-}
 
-@keyframes shimmer {
-    0% { background-position: -200% 0; }
-    100% { background-position: 200% 0; }
-}
-
-/* تحسين مظهر التقدم */
-#processing-progress-container {
-    transition: all 0.3s ease;
+/* تصميم بسيط للشريط */
+#upload-progress-bar, #processing-progress-bar {
+    transition: width 0.3s ease;
 }
 </style>
 @endsection
