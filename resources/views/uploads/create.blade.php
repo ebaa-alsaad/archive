@@ -330,6 +330,7 @@ function preventDefaults(e) {
 }
 
 // إرسال النموذج
+// إرسال النموذج - الإصدار المحسن
 document.getElementById('upload-form').addEventListener('submit', async function(e) {
     e.preventDefault();
 
@@ -351,7 +352,8 @@ document.getElementById('upload-form').addEventListener('submit', async function
         uploadProgressContainer.classList.remove('hidden');
         uploadProgressMessage.textContent = 'جاري رفع الملف...';
 
-        response = await fetch('{{ route("uploads.store") }}', {
+        // ✅ استخدام fetch مع timeout و retry
+        response = await fetchWithRetry('{{ route("uploads.store") }}', {
             method: 'POST',
             body: formData,
             headers: {
@@ -359,16 +361,16 @@ document.getElementById('upload-form').addEventListener('submit', async function
                 'Accept': 'application/json',
                 'X-CSRF-TOKEN': '{{ csrf_token() }}'
             }
-        });
+        }, 3); // 3 محاولات
 
         if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+            throw new Error(`خطأ في الخادم: ${response.status}`);
         }
 
         const data = await response.json();
 
         if (!data.success) {
-            throw new Error(data.message || 'حدث خطأ غير معروف');
+            throw new Error(data.error || data.message || 'حدث خطأ غير معروف');
         }
 
         currentUploadId = data.upload_id;
@@ -381,10 +383,69 @@ document.getElementById('upload-form').addEventListener('submit', async function
 
     } catch (error) {
         console.error('Upload error:', error);
-        showToast(error.message || 'فشل في رفع الملف', 'error');
+
+        // ✅ رسائل خطأ أكثر وضوحاً
+        let errorMessage = error.message;
+        if (error.name === 'TypeError' && error.message.includes('fetch')) {
+            errorMessage = 'فشل في الاتصال بالخادم. يرجى التحقق من اتصال الإنترنت والمحاولة مرة أخرى.';
+        } else if (error.message.includes('timeout')) {
+            errorMessage = 'انتهت مهلة الاتصال. يرجى المحاولة مرة أخرى.';
+        }
+
+        showToast(errorMessage, 'error');
         resetToUpload();
     }
 });
+
+// ✅ دالة fetch مع retry و timeout
+async function fetchWithRetry(url, options, retries = 3, timeout = 120000) {
+    for (let i = 0; i < retries; i++) {
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+            options.signal = controller.signal;
+
+            const response = await fetch(url, options);
+            clearTimeout(timeoutId);
+
+            return response;
+        } catch (error) {
+            console.log(`Attempt ${i + 1} failed:`, error);
+
+            if (i === retries - 1) {
+                if (error.name === 'AbortError') {
+                    throw new Error('انتهت مهلة الاتصال بالخادم');
+                }
+                throw error;
+            }
+
+            // انتظار تصاعدي قبل إعادة المحاولة
+            await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+        }
+    }
+}
+
+// ✅ تحديث شريط تقدم الرفع الحقيقي
+function setupUploadProgress() {
+    const xhr = new XMLHttpRequest();
+
+    xhr.upload.addEventListener('progress', function(e) {
+        if (e.lengthComputable) {
+            const percentComplete = (e.loaded / e.total) * 100;
+            uploadProgressBar.style.width = percentComplete + '%';
+            uploadProgressPercentage.textContent = Math.round(percentComplete) + '%';
+
+            if (percentComplete < 100) {
+                uploadProgressMessage.textContent = `جاري رفع الملف... ${Math.round(percentComplete)}%`;
+            } else {
+                uploadProgressMessage.textContent = 'جاري معالجة الملف...';
+            }
+        }
+    });
+
+    return xhr;
+}
 
 function resetProgress() {
     uploadProgressBar.style.width = '0%';
@@ -411,13 +472,15 @@ function startProgressPolling() {
             const data = await response.json();
             const progress = data.progress || 0;
             const status = data.status || 'processing';
+            const message = data.message || 'جاري المعالجة...';
 
-            // تحديث شريط التقدم
+            // تحديث شريط التقدم والرسالة
             processingProgressBar.style.width = progress + '%';
             processingProgressPercentage.textContent = progress + '%';
+            processingProgressMessage.textContent = message;
 
-            // تحديث الرسائل حسب المرحلة
-            updateProgressMessages(progress, status);
+            // تحديث التفاصيل الإضافية
+            updateProgressDetails(progress, message);
 
             if (progress >= 100 || status === 'completed') {
                 clearInterval(pollInterval);
@@ -429,45 +492,36 @@ function startProgressPolling() {
 
         } catch (error) {
             console.error('Progress polling error:', error);
+            // في حالة الخطأ، نعرض رسالة توضيحية
+            processingProgressMessage.textContent = 'جاري المعالجة...';
         }
-    }, 2000);
+    }, 1500); // تقليل الفترة إلى 1.5 ثانية لتحديث أسرع
 }
 
-function updateProgressMessages(progress, status) {
-    const messages = {
-        0: 'جاري تهيئة الملف...',
-        20: 'جاري فحص الصفحات...',
-        40: 'جاري استخراج الباركود...',
-        60: 'جاري تقسيم المجموعات...',
-        80: 'جاري إنشاء الملفات...',
-        100: 'جاري الانتهاء...'
-    };
-
-    const closestProgress = Object.keys(messages).reduce((prev, curr) => {
-        return Math.abs(curr - progress) < Math.abs(prev - progress) ? curr : prev;
-    });
-
-    processingProgressMessage.textContent = messages[closestProgress] || 'جاري المعالجة...';
-
-    if (progress < 30) {
-        processingDetails.textContent = 'فحص هيكل الملف والصفحات...';
+function updateProgressDetails(progress, message) {
+    // إضافة تفاصيل إضافية حسب مرحلة التقدم
+    if (progress < 20) {
+        processingDetails.textContent = 'تهيئة الملف وفحص الهيكل...';
+    } else if (progress < 40) {
+        processingDetails.textContent = 'استخراج الباركود من الصفحات...';
     } else if (progress < 60) {
-        processingDetails.textContent = 'استخراج الباركود والمعلومات...';
-    } else if (progress < 90) {
-        processingDetails.textContent = 'تقسيم المستند وإنشاء المجموعات...';
+        processingDetails.textContent = 'تقسيم المستند إلى مجموعات...';
+    } else if (progress < 80) {
+        processingDetails.textContent = 'إنشاء ملفات PDF للمجموعات...';
     } else {
-        processingDetails.textContent = 'المراحل النهائية...';
+        processingDetails.textContent = 'المراحل النهائية للحفظ...';
     }
 }
 
 function onProcessingComplete(data) {
     processingProgressBar.style.width = '100%';
     processingProgressPercentage.textContent = '100%';
-    processingProgressMessage.textContent = 'تم الانتهاء!';
+    processingProgressMessage.textContent = 'تم الانتهاء بنجاح!';
+    processingDetails.textContent = 'جاري تحضير النتائج...';
 
     showToast('تمت معالجة الملف بنجاح', 'success');
 
-    // عرض النتائج
+    // عرض النتائج بعد تأخير بسيط
     setTimeout(() => {
         processingProgressContainer.classList.add('hidden');
         resultsContainer.classList.remove('hidden');
@@ -481,7 +535,7 @@ function onProcessingComplete(data) {
         // إخفاء واجهة الرفع الأساسية
         document.getElementById('upload-card').classList.add('hidden');
 
-    }, 1000);
+    }, 1500);
 }
 
 function onProcessingFailed(data) {
@@ -533,6 +587,22 @@ window.addEventListener('beforeunload', () => {
 #drop-zone:hover {
     border-color: #3b82f6;
     background-color: #f8fafc;
+}
+/* إضافة تأثيرات للشريط التقدم */
+#processing-progress-bar {
+    background: linear-gradient(90deg, #10b981, #34d399, #10b981);
+    background-size: 200% 100%;
+    animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+}
+
+/* تحسين مظهر التقدم */
+#processing-progress-container {
+    transition: all 0.3s ease;
 }
 </style>
 @endsection

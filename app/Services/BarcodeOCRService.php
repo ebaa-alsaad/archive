@@ -5,49 +5,64 @@ namespace App\Services;
 use Exception;
 use App\Models\Group;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Facades\Storage;
 
 class BarcodeOCRService
 {
-    private $imageCache = [];    // cache: cacheKey => path
-    private $barcodeCache = [];  // cache: cacheKey => barcode|null
-    private $textCache = [];     // cache: cacheKey => text
-    private $ocrCache = [];      // cache: cacheKey => text
-    private $pdfHash = null;     // hash of current PDF (to speed cache keys)
+    private $imageCache = [];
+    private $barcodeCache = [];
+    private $textCache = [];
+    private $ocrCache = [];
+    private $pdfHash = null;
+    private $uploadId = null; // إضافة لتتبع الرفع
 
     /**
-     * المعالجة الرئيسية للملف
+     * المعالجة الرئيسية للملف مع تتبع التقدم
      */
     public function processPdf($upload)
     {
+        // تعيين معرف الرفع للتتبع
+        $this->uploadId = $upload->id;
+
         // موارد أعلى لملفات كبيرة
         set_time_limit(1200);
         ini_set('memory_limit', '1024M');
 
-        $pdfPath = Storage::disk('private')->path($upload->stored_filename);
+        // $pdfPath = Storage::disk('private')->path($upload->stored_filename);
+           $pdfPath = Storage::disk('local')->path($upload->stored_filename);
 
         if (!file_exists($pdfPath)) {
             throw new Exception("PDF file not found: " . $pdfPath);
         }
 
-        // تخزين هاش الـ PDF لمفاتيح الكاش
-        $this->pdfHash = md5($pdfPath);
+        // تحديث التقدم - البدء
+        $this->updateProgress(5, 'جاري تهيئة الملف...');
 
+        $this->pdfHash = md5($pdfPath);
         $pageCount = $this->getPdfPageCount($pdfPath);
 
         Log::info("Processing PDF", ['path' => $pdfPath, 'pages' => $pageCount]);
 
-        // قراءة باركود الفاصل من الصفحة الأولى (يستخدم الكاش)
+        // تحديث التقدم - قراءة الباركود
+        $this->updateProgress(15, 'جاري قراءة الباركود الفاصل...');
+
         $separatorBarcode = $this->readPageBarcode($pdfPath, 1) ?? 'default_barcode';
         Log::info("Using separator barcode", ['separator' => $separatorBarcode]);
 
-        // تقسيم الصفحات إلى أقسام حسب الباركود المتكرر
+        // تحديث التقدم - تقسيم الصفحات
+        $this->updateProgress(25, 'جاري تقسيم الصفحات إلى أقسام...');
+
         $sections = [];
         $currentSection = [];
 
         for ($page = 1; $page <= $pageCount; $page++) {
             $barcode = $this->readPageBarcode($pdfPath, $page);
-            // لاحظ: لا نكتب لوج لكل صفحة هنا لعدم تحميل الـ IO
+
+            // تحديث تقدم جزئي لكل صفحة
+            $pageProgress = 25 + (($page / $pageCount) * 20);
+            $this->updateProgress($pageProgress, "جاري معالجة الصفحة $page من $pageCount...");
+
             if ($barcode === $separatorBarcode) {
                 if (!empty($currentSection)) {
                     $sections[] = $currentSection;
@@ -64,10 +79,18 @@ class BarcodeOCRService
 
         Log::info("Total sections found", ['count' => count($sections)]);
 
-        // إنشاء ملفات PDF لكل قسم
+        // تحديث التقدم - إنشاء الملفات
+        $this->updateProgress(60, 'جاري إنشاء ملفات PDF للمجموعات...');
+
         $createdGroups = [];
+        $totalSections = count($sections);
+
         foreach ($sections as $index => $pages) {
             if (empty($pages)) continue;
+
+            // تحديث التقدم لكل قسم
+            $sectionProgress = 60 + (($index / $totalSections) * 35);
+            $this->updateProgress($sectionProgress, "جاري إنشاء المجموعة " . ($index + 1) . " من $totalSections...");
 
             $filename = $this->generateFilenameWithOCR($pdfPath, $pages, $index, $separatorBarcode);
             $filenameSafe = $filename . '.pdf';
@@ -84,7 +107,6 @@ class BarcodeOCRService
             $pdfCreated = $this->createQuickPdf($pdfPath, $pages, $outputPath);
 
             if ($pdfCreated) {
-                // سجل واحد فقط عند نجاح إنشاء كل ملف
                 Log::debug("PDF created", ['file' => $outputPath, 'pages' => count($pages)]);
                 $group = Group::create([
                     'code' => $separatorBarcode,
@@ -99,12 +121,42 @@ class BarcodeOCRService
             }
         }
 
+        // تحديث التقدم - الانتهاء
+        $this->updateProgress(100, 'تم الانتهاء من المعالجة!');
+
         Log::info("Processing completed", [
             'sections_created' => count($createdGroups),
             'section_names' => array_map(fn($g) => $g->pdf_path, $createdGroups)
         ]);
 
         return $createdGroups;
+    }
+
+    /**
+     * تحديث حالة التقدم
+     */
+    private function updateProgress($progress, $message = '')
+    {
+        if ($this->uploadId) {
+            try {
+                // تخزين في Redis
+                Redis::setex("upload_progress:{$this->uploadId}", 3600, $progress);
+
+                // يمكنك أيضاً تخزين الرسالة إذا أردت
+                Redis::setex("upload_message:{$this->uploadId}", 3600, $message);
+
+                Log::debug("Progress updated", [
+                    'upload_id' => $this->uploadId,
+                    'progress' => $progress,
+                    'message' => $message
+                ]);
+            } catch (Exception $e) {
+                Log::warning("Failed to update progress", [
+                    'upload_id' => $this->uploadId,
+                    'error' => $e->getMessage()
+                ]);
+            }
+        }
     }
 
     /**
@@ -343,7 +395,7 @@ class BarcodeOCRService
             return $this->imageCache[$cacheKey];
         }
 
-        $tempDir = storage_path("app/temp");
+        $tempDir = storage_path("app/temp/images");
         if (!file_exists($tempDir)) mkdir($tempDir, 0775, true);
 
         $base = "page_{$cacheKey}";
