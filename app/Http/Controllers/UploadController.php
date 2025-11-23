@@ -131,13 +131,13 @@ class UploadController extends Controller
             $storedName = $file->store('uploads', 'private');
             $fullPath = Storage::disk('private')->path($storedName);
 
-            // إنشاء سجل الرفع مباشرة
+            // ✅ التعديل: إنشاء السجل بحالة 'processing' مباشرة
             $upload = Upload::create([
                 'original_filename' => $file->getClientOriginalName(),
                 'stored_filename' => $storedName,
-                'total_pages' => 0, // سيتم تحديثه لاحقاً
+                'total_pages' => 0,
                 'file_size_mb' => $fileSizeMB,
-                'status' => 'pending',
+                'status' => 'processing', // ✅ غيرنا من 'pending' إلى 'processing'
                 'user_id' => auth()->id(),
             ]);
 
@@ -146,7 +146,7 @@ class UploadController extends Controller
                 'success' => true,
                 'message' => "تم رفع الملف بنجاح ({$fileSizeMB} MB). جاري المعالجة...",
                 'upload_id' => $upload->id,
-                'status' => 'pending'
+                'status' => 'processing' // ✅ غيرنا هنا كمان
             ]);
 
         } catch (\Exception $e) {
@@ -161,21 +161,22 @@ class UploadController extends Controller
             ], 500);
         }
     }
-    
+
     public function process($uploadId)
     {
         try {
             $upload = Upload::findOrFail($uploadId);
             
-            // ✅ التحقق من أن المعالجة ما بتتكرر
+            // ✅ التعديل: التحقق من أن status هو 'processing' (وهو راح يكون هيك)
             if ($upload->status !== 'processing') {
                 return response()->json([
                     'success' => false,
-                    'error' => 'الملف تم معالجته مسبقاً'
+                    'error' => 'الملف ليس في حالة معالجة. الحالة الحالية: ' . $upload->status
                 ]);
             }
 
-            $upload->update(['status' => 'processing']);
+            // ✅ لا حاجة لتحديث status لأنه already 'processing'
+            // $upload->update(['status' => 'processing']); // ❌ احذف هذا السطر
 
             $fullPath = Storage::disk('local')->path($upload->stored_filename);
             
@@ -183,7 +184,7 @@ class UploadController extends Controller
             $pageCount = $this->barcodeService->getPdfPageCount($fullPath);
             $upload->update(['total_pages' => $pageCount]);
 
-            // معالجة PDF مرة واحدة فقط
+            // معالجة PDF
             $groups = $this->barcodeService->processPdf($upload);
 
             // تحديث الحالة النهائية
