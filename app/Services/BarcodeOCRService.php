@@ -18,7 +18,7 @@ class BarcodeOCRService
     private $uploadId = null; // إضافة لتتبع الرفع
 
    /**
-     * المعالجة الرئيسية للملف مع تتبع التقدم
+     * المعالجة الرئيسية للملف مع تتبع التقدم - الإصدار المصحح
      */
     public function processPdf($upload)
     {
@@ -55,11 +55,7 @@ class BarcodeOCRService
         $sections = [];
         $currentSection = [];
 
-        // ✅ التعديل: إضافة أول قسم إذا كانت الصفحة الأولى فيها باركود
-        if ($this->readPageBarcode($pdfPath, 1) === $separatorBarcode) {
-            $currentSection = [1]; // إضافة الصفحة الأولى كبداية قسم
-        }
-
+        // ✅ التعديل: خوارزمية تقسيم صحيحة
         for ($page = 1; $page <= $pageCount; $page++) {
             $barcode = $this->readPageBarcode($pdfPath, $page);
 
@@ -68,24 +64,52 @@ class BarcodeOCRService
             $this->updateProgress($pageProgress, "جاري معالجة الصفحة $page من $pageCount...");
 
             if ($barcode === $separatorBarcode) {
-                // ✅ التعديل: إضافة الصفحة الحالية (صفحة الباركود) للقسم الحالي
-                $currentSection[] = $page;
-                
+                // ✅ التعديل: إذا وجدنا باركود فاصل، ننهي القسم الحالي ونبدأ قسم جديد
                 if (!empty($currentSection)) {
                     $sections[] = $currentSection;
+                    Log::debug("Section completed", [
+                        'section_number' => count($sections),
+                        'pages' => $currentSection,
+                        'triggered_by_barcode_page' => $page
+                    ]);
                 }
+                // ✅ التعديل: نبدأ قسم جديد بدون إضافة صفحة الباركود
                 $currentSection = [];
+                Log::debug("New section started after barcode page", ['barcode_page' => $page]);
             } else {
+                // ✅ التعديل: إضافة الصفحة العادية فقط للقسم الحالي
                 $currentSection[] = $page;
             }
         }
 
-        // ✅ التعديل: التأكد من إضافة آخر قسم
+        // ✅ التعديل: إضافة آخر قسم إذا كان فيه صفحات
         if (!empty($currentSection)) {
             $sections[] = $currentSection;
+            Log::debug("Final section added", [
+                'section_number' => count($sections),
+                'pages' => $currentSection
+            ]);
         }
 
-        Log::info("Total sections found", ['count' => count($sections)]);
+        // ✅ التعديل: تنظيف الأقسام الفارغة
+        $sections = array_filter($sections, function($section) {
+            return !empty($section);
+        });
+
+        Log::info("Total sections found", [
+            'count' => count($sections),
+            'sections_pages' => array_map('count', $sections)
+        ]);
+
+        // ✅ التعديل: التحقق من أن مجموع الصفحات يساوي العدد الأصلي
+        $totalPagesInSections = array_sum(array_map('count', $sections));
+        if ($totalPagesInSections !== $pageCount) {
+            Log::warning("Page count mismatch", [
+                'total_pages_in_sections' => $totalPagesInSections,
+                'original_page_count' => $pageCount,
+                'difference' => $pageCount - $totalPagesInSections
+            ]);
+        }
 
         // تحديث التقدم - إنشاء الملفات
         $this->updateProgress(60, 'جاري إنشاء ملفات PDF للمجموعات...');
@@ -115,10 +139,11 @@ class BarcodeOCRService
             $pdfCreated = $this->createQuickPdf($pdfPath, $pages, $outputPath);
 
             if ($pdfCreated) {
-                Log::debug("PDF created", [
+                Log::debug("PDF created successfully", [
                     'file' => $outputPath, 
-                    'pages' => count($pages),
-                    'page_numbers' => $pages // تسجيل أرقام الصفحات للتdebug
+                    'pages_count' => count($pages),
+                    'page_numbers' => $pages,
+                    'file_size' => filesize($outputPath)
                 ]);
                 
                 $group = Group::create([
@@ -130,7 +155,11 @@ class BarcodeOCRService
                 ]);
                 $createdGroups[] = $group;
             } else {
-                Log::warning("Failed creating PDF group", ['filename' => $filenameSafe, 'pages' => $pages]);
+                Log::warning("Failed creating PDF group", [
+                    'filename' => $filenameSafe, 
+                    'pages' => $pages,
+                    'section_index' => $index
+                ]);
             }
         }
 
@@ -139,8 +168,9 @@ class BarcodeOCRService
 
         Log::info("Processing completed", [
             'sections_created' => count($createdGroups),
-            'total_pages_in_sections' => array_sum(array_map('count', $sections)),
-            'original_page_count' => $pageCount
+            'total_pages_in_sections' => $totalPagesInSections,
+            'original_page_count' => $pageCount,
+            'group_files' => array_map(fn($g) => $g->pdf_path, $createdGroups)
         ]);
 
         return $createdGroups;
