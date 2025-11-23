@@ -137,7 +137,7 @@ class UploadController extends Controller
                 'stored_filename' => $storedName,
                 'total_pages' => 0, // سيتم تحديثه لاحقاً
                 'file_size_mb' => $fileSizeMB,
-                'status' => 'processing',
+                'status' => 'pending',
                 'user_id' => auth()->id(),
             ]);
 
@@ -146,7 +146,7 @@ class UploadController extends Controller
                 'success' => true,
                 'message' => "تم رفع الملف بنجاح ({$fileSizeMB} MB). جاري المعالجة...",
                 'upload_id' => $upload->id,
-                'status' => 'processing'
+                'status' => 'pending'
             ]);
 
         } catch (\Exception $e) {
@@ -175,8 +175,7 @@ class UploadController extends Controller
                 ]);
             }
 
-            // ✅ تحديث الحالة فوراً لمنع التكرار
-            $upload->update(['status' => 'processing_started']);
+            $upload->update(['status' => 'processing']);
 
             $fullPath = Storage::disk('local')->path($upload->stored_filename);
             

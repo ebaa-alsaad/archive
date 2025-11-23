@@ -45,7 +45,7 @@ class BarcodeOCRService
         $this->pdfHash = md5($pdfPath);
         $pageCount = $this->getPdfPageCount($pdfPath);
 
-        // ✅ قراءة الباركود الفاصل من الصفحة الأولى
+        //  قراءة الباركود الفاصل من الصفحة الأولى
         $separatorBarcode = $this->readPageBarcode($pdfPath, 1) ?? 'default_barcode';
         Log::info("Using separator barcode", ['separator' => $separatorBarcode]);
 
