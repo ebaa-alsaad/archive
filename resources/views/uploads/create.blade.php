@@ -147,6 +147,8 @@ const toastContainer = document.getElementById('toast-container');
 
 let currentUploadId = null;
 let pollInterval = null;
+let estimatedProgress = 0;
+let progressStartTime = null;
 
 // إضافة حالة السحب
 let isDragging = false;
@@ -220,8 +222,6 @@ function updateFileInput(files) {
         archiveButton.disabled = false;
 
         showToast('تم اختيار الملف بنجاح', 'success');
-
-
     }
 }
 
@@ -258,6 +258,8 @@ function resetToUpload() {
     }
 
     currentUploadId = null;
+    estimatedProgress = 0;
+    progressStartTime = null;
 
     // إظهار واجهة الرفع الأساسية
     document.getElementById('upload-card').classList.remove('hidden');
@@ -329,74 +331,6 @@ function preventDefaults(e) {
     e.stopPropagation();
 }
 
-// إرسال النموذج
-// إرسال النموذج - الإصدار المحسن
-document.getElementById('upload-form').addEventListener('submit', async function(e) {
-    e.preventDefault();
-
-    if (!fileInput.files.length) {
-        showToast('يرجى اختيار ملف PDF أولاً', 'error');
-        return;
-    }
-
-    // إعداد الواجهة
-    archiveButton.disabled = true;
-    archiveButton.innerHTML = '<i class="fa-solid fa-spinner fa-spin ml-2"></i> جاري البدء...';
-    resetProgress();
-
-    const formData = new FormData(this);
-    let response;
-
-    try {
-        // بدء رفع الملف
-        uploadProgressContainer.classList.remove('hidden');
-        uploadProgressMessage.textContent = 'جاري رفع الملف...';
-
-        // ✅ استخدام fetch مع timeout و retry
-        response = await fetchWithRetry('{{ route("uploads.store") }}', {
-            method: 'POST',
-            body: formData,
-            headers: {
-                'X-Requested-With': 'XMLHttpRequest',
-                'Accept': 'application/json',
-                'X-CSRF-TOKEN': '{{ csrf_token() }}'
-            }
-        }, 3); // 3 محاولات
-
-        if (!response.ok) {
-            throw new Error(`خطأ في الخادم: ${response.status}`);
-        }
-
-        const data = await response.json();
-
-        if (!data.success) {
-            throw new Error(data.error || data.message || 'حدث خطأ غير معروف');
-        }
-
-        currentUploadId = data.upload_id;
-        showToast('تم رفع الملف بنجاح، جاري المعالجة...', 'success');
-
-        // الانتقال إلى مرحلة المعالجة
-        uploadProgressContainer.classList.add('hidden');
-        processingProgressContainer.classList.remove('hidden');
-        startProgressPolling();
-
-    } catch (error) {
-        console.error('Upload error:', error);
-
-        // ✅ رسائل خطأ أكثر وضوحاً
-        let errorMessage = error.message;
-        if (error.name === 'TypeError' && error.message.includes('fetch')) {
-            errorMessage = 'فشل في الاتصال بالخادم. يرجى التحقق من اتصال الإنترنت والمحاولة مرة أخرى.';
-        } else if (error.message.includes('timeout')) {
-            errorMessage = 'انتهت مهلة الاتصال. يرجى المحاولة مرة أخرى.';
-        }
-
-        showToast(errorMessage, 'error');
-        resetToUpload();
-    }
-});
-
 // ✅ دالة fetch مع retry و timeout
 async function fetchWithRetry(url, options, retries = 3, timeout = 120000) {
     for (let i = 0; i < retries; i++) {
@@ -426,26 +360,117 @@ async function fetchWithRetry(url, options, retries = 3, timeout = 120000) {
     }
 }
 
-// ✅ تحديث شريط تقدم الرفع الحقيقي
-function setupUploadProgress() {
+// ✅ تحديث شريط تقدم الرفع الحقيقي باستخدام XMLHttpRequest
+function uploadWithProgress(formData, onProgress, onComplete, onError) {
     const xhr = new XMLHttpRequest();
-
+    
     xhr.upload.addEventListener('progress', function(e) {
         if (e.lengthComputable) {
             const percentComplete = (e.loaded / e.total) * 100;
-            uploadProgressBar.style.width = percentComplete + '%';
-            uploadProgressPercentage.textContent = Math.round(percentComplete) + '%';
-
-            if (percentComplete < 100) {
-                uploadProgressMessage.textContent = `جاري رفع الملف... ${Math.round(percentComplete)}%`;
-            } else {
-                uploadProgressMessage.textContent = 'جاري معالجة الملف...';
-            }
+            onProgress(percentComplete);
         }
     });
-
+    
+    xhr.addEventListener('load', function() {
+        if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+                const data = JSON.parse(xhr.responseText);
+                onComplete(data);
+            } catch (e) {
+                onError('فشل في تحليل الاستجابة من الخادم');
+            }
+        } else {
+            onError(`خطأ في الخادم: ${xhr.status}`);
+        }
+    });
+    
+    xhr.addEventListener('error', function() {
+        onError('فشل في الاتصال بالخادم');
+    });
+    
+    xhr.addEventListener('timeout', function() {
+        onError('انتهت مهلة الاتصال');
+    });
+    
+    xhr.open('POST', '{{ route("uploads.store") }}');
+    xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+    xhr.setRequestHeader('X-CSRF-TOKEN', '{{ csrf_token() }}');
+    xhr.timeout = 120000;
+    xhr.send(formData);
+    
     return xhr;
 }
+
+// إرسال النموذج - الإصدار المحسن مع تقدم الرفع الحقيقي
+document.getElementById('upload-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    if (!fileInput.files.length) {
+        showToast('يرجى اختيار ملف PDF أولاً', 'error');
+        return;
+    }
+
+    // إعداد الواجهة
+    archiveButton.disabled = true;
+    archiveButton.innerHTML = '<i class="fa-solid fa-spinner fa-spin ml-2"></i> جاري البدء...';
+    resetProgress();
+
+    const formData = new FormData(this);
+
+    try {
+        // بدء رفع الملف مع تقدم حقيقي
+        uploadProgressContainer.classList.remove('hidden');
+        uploadProgressMessage.textContent = 'جاري رفع الملف... 0%';
+
+        // استخدام XMLHttpRequest لتتبع تقدم الرفع
+        uploadWithProgress(
+            formData,
+            // onProgress
+            (percent) => {
+                const roundedPercent = Math.round(percent);
+                uploadProgressBar.style.width = percent + '%';
+                uploadProgressPercentage.textContent = roundedPercent + '%';
+                uploadProgressMessage.textContent = `جاري رفع الملف... ${roundedPercent}%`;
+                
+                if (percent >= 100) {
+                    uploadProgressMessage.textContent = 'جاري معالجة الملف...';
+                }
+            },
+            // onComplete
+            (data) => {
+                if (!data.success) {
+                    throw new Error(data.error || data.message || 'حدث خطأ غير معروف');
+                }
+
+                currentUploadId = data.upload_id;
+                showToast('تم رفع الملف بنجاح، جاري المعالجة...', 'success');
+
+                // الانتقال إلى مرحلة المعالجة
+                uploadProgressContainer.classList.add('hidden');
+                processingProgressContainer.classList.remove('hidden');
+                startProgressPolling();
+            },
+            // onError
+            (error) => {
+                throw new Error(error);
+            }
+        );
+
+    } catch (error) {
+        console.error('Upload error:', error);
+
+        // ✅ رسائل خطأ أكثر وضوحاً
+        let errorMessage = error.message;
+        if (error.name === 'TypeError' && error.message.includes('fetch')) {
+            errorMessage = 'فشل في الاتصال بالخادم. يرجى التحقق من اتصال الإنترنت والمحاولة مرة أخرى.';
+        } else if (error.message.includes('timeout')) {
+            errorMessage = 'انتهت مهلة الاتصال. يرجى المحاولة مرة أخرى.';
+        }
+
+        showToast(errorMessage, 'error');
+        resetToUpload();
+    }
+});
 
 function resetProgress() {
     uploadProgressBar.style.width = '0%';
@@ -459,12 +484,15 @@ function startProgressPolling() {
         clearInterval(pollInterval);
     }
 
+    progressStartTime = Date.now();
+    estimatedProgress = 5; // البدء من 5%
+
     pollInterval = setInterval(async () => {
         if (!currentUploadId) return;
 
         try {
             const response = await fetch(`/uploads/progress/${currentUploadId}`);
-
+            
             if (!response.ok) {
                 throw new Error('Failed to fetch progress');
             }
@@ -473,14 +501,31 @@ function startProgressPolling() {
             const progress = data.progress || 0;
             const status = data.status || 'processing';
             const message = data.message || 'جاري المعالجة...';
+            const redisConnected = data.redis_connected !== false;
 
-            // تحديث شريط التقدم والرسالة
-            processingProgressBar.style.width = progress + '%';
-            processingProgressPercentage.textContent = progress + '%';
+            console.log('Progress update:', { 
+                progress, 
+                status, 
+                message, 
+                redisConnected,
+                fallback: data.fallback 
+            });
+
+            // ✅ تحديث الواجهة بغض النظر عن القيمة
+            let displayProgress = progress;
+            
+            // إذا كان التقدم 0 أو Redis مش شغال، استخدم التقدير
+            if ((progress === 0 && status === 'processing') || !redisConnected || data.fallback) {
+                displayProgress = estimateProgressBasedOnTime();
+                processingDetails.textContent = 'جاري المعالجة (وضع تقديري)...';
+            } else {
+                displayProgress = progress;
+                processingDetails.textContent = getProgressDetails(progress);
+            }
+
+            processingProgressBar.style.width = displayProgress + '%';
+            processingProgressPercentage.textContent = Math.round(displayProgress) + '%';
             processingProgressMessage.textContent = message;
-
-            // تحديث التفاصيل الإضافية
-            updateProgressDetails(progress, message);
 
             if (progress >= 100 || status === 'completed') {
                 clearInterval(pollInterval);
@@ -492,24 +537,47 @@ function startProgressPolling() {
 
         } catch (error) {
             console.error('Progress polling error:', error);
-            // في حالة الخطأ، نعرض رسالة توضيحية
+            // ✅ في حالة الخطأ، استمر في عرض تقدم تقديري
+            const estimated = estimateProgressBasedOnTime();
+            processingProgressBar.style.width = estimated + '%';
+            processingProgressPercentage.textContent = Math.round(estimated) + '%';
             processingProgressMessage.textContent = 'جاري المعالجة...';
+            processingDetails.textContent = 'الاتصال بالخادم...';
         }
-    }, 1500); // تقليل الفترة إلى 1.5 ثانية لتحديث أسرع
+    }, 2000);
 }
 
-function updateProgressDetails(progress, message) {
-    // إضافة تفاصيل إضافية حسب مرحلة التقدم
+// ✅ تقدير التقدم بناءً على الوقت المنقضي
+function estimateProgressBasedOnTime() {
+    if (!progressStartTime) return 5;
+    
+    const elapsed = Date.now() - progressStartTime;
+    const elapsedMinutes = elapsed / (1000 * 60);
+    
+    // تقدير أن العملية تستغرق 2-5 دقائق كحد أقصى
+    let estimated = 5 + (elapsedMinutes / 3) * 95;
+    
+    // لا تتجاوز 95% حتى نتحقق من الاكتمال الفعلي
+    estimated = Math.min(95, estimated);
+    estimatedProgress = Math.max(estimatedProgress, estimated);
+    
+    return Math.round(estimatedProgress);
+}
+
+// ✅ الحصول على تفاصيل التقدم
+function getProgressDetails(progress) {
     if (progress < 20) {
-        processingDetails.textContent = 'تهيئة الملف وفحص الهيكل...';
+        return 'تهيئة الملف وفحص الهيكل...';
     } else if (progress < 40) {
-        processingDetails.textContent = 'استخراج الباركود من الصفحات...';
+        return 'استخراج الباركود من الصفحات...';
     } else if (progress < 60) {
-        processingDetails.textContent = 'تقسيم المستند إلى مجموعات...';
+        return 'تقسيم المستند إلى مجموعات...';
     } else if (progress < 80) {
-        processingDetails.textContent = 'إنشاء ملفات PDF للمجموعات...';
+        return 'إنشاء ملفات PDF للمجموعات...';
+    } else if (progress < 95) {
+        return 'المراحل النهائية للحفظ...';
     } else {
-        processingDetails.textContent = 'المراحل النهائية للحفظ...';
+        return 'جاري الانتهاء...';
     }
 }
 
@@ -521,7 +589,7 @@ function onProcessingComplete(data) {
 
     showToast('تمت معالجة الملف بنجاح', 'success');
 
-    // عرض النتائج بعد تأخير بسيط
+    // الانتقال للنتائج بعد تأخير
     setTimeout(() => {
         processingProgressContainer.classList.add('hidden');
         resultsContainer.classList.remove('hidden');
@@ -532,9 +600,13 @@ function onProcessingComplete(data) {
         resultsMessage.textContent = `تم إنشاء ${groupsCount} مجموعة بنجاح`;
         resultsDetails.textContent = `من أصل ${totalPages} صفحة`;
 
-        // إخفاء واجهة الرفع الأساسية
         document.getElementById('upload-card').classList.add('hidden');
-
+        
+        // ✅ إضافة معلومات إضافية إذا موجودة
+        if (data.barcodes && data.barcodes.length > 0) {
+            resultsDetails.innerHTML += `<br><small>تم العثور على ${data.barcodes.length} باركود</small>`;
+        }
+        
     }, 1500);
 }
 
@@ -542,7 +614,8 @@ function onProcessingFailed(data) {
     showToast(data.error_message || 'فشلت معالجة الملف', 'error');
 
     // عرض رسالة الخطأ
-    errorMessage.textContent = data.error_message || 'حدث خطأ غير معروف أثناء المعالجة';
+    const errorMsg = data.error_message || data.error || 'حدث خطأ غير معروف أثناء المعالجة';
+    errorMessage.textContent = errorMsg;
     processingProgressContainer.classList.add('hidden');
     errorContainer.classList.remove('hidden');
     document.getElementById('upload-card').classList.add('hidden');
@@ -558,6 +631,44 @@ window.addEventListener('beforeunload', () => {
     if (pollInterval) {
         clearInterval(pollInterval);
     }
+});
+
+// ✅ إضافة تأثيرات CSS ديناميكية
+function addProgressAnimations() {
+    const style = document.createElement('style');
+    style.textContent = `
+        #processing-progress-bar {
+            background: linear-gradient(90deg, #10b981, #34d399, #10b981);
+            background-size: 200% 100%;
+            animation: shimmer 2s infinite;
+            transition: width 0.5s ease-out;
+        }
+        
+        #upload-progress-bar {
+            transition: width 0.3s ease-out;
+        }
+        
+        @keyframes shimmer {
+            0% { background-position: -200% 0; }
+            100% { background-position: 200% 0; }
+        }
+        
+        .pulse-upload {
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.7; }
+            100% { opacity: 1; }
+        }
+    `;
+    document.head.appendChild(style);
+}
+
+// تهيئة التأثيرات عند تحميل الصفحة
+document.addEventListener('DOMContentLoaded', function() {
+    addProgressAnimations();
 });
 </script>
 

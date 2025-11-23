@@ -395,7 +395,7 @@ class BarcodeOCRService
             return $this->imageCache[$cacheKey];
         }
 
-        $tempDir = storage_path("app/temp/images");
+        $tempDir = storage_path("app/temp");
         if (!file_exists($tempDir)) mkdir($tempDir, 0775, true);
 
         $base = "page_{$cacheKey}";

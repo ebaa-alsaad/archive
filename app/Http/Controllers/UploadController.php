@@ -118,25 +118,19 @@ class UploadController extends Controller
         Log::info('Upload request received', [
             'has_file' => $request->hasFile('pdf_file'),
             'file_size' => $request->file('pdf_file')?->getSize(),
+            'file_size_mb' => $request->file('pdf_file') ? round($request->file('pdf_file')->getSize() / 1024 / 1024, 2) : 0
         ]);
 
         try {
             $request->validate([
-                'pdf_file' => 'required|mimes:pdf|max:71680' // 70MB
+                'pdf_file' => 'required|mimes:pdf|max:71680'
             ]);
 
             $file = $request->file('pdf_file');
             $fileSizeMB = round($file->getSize() / 1024 / 1024, 2);
 
-            // ✅ الحل: استخدام temporary disk بدلاً من permanent storage
-            $tempPath = $file->store('temp', 'local'); // 'local' disk للـ temp
-            $fullPath = Storage::disk('local')->path($tempPath);
-
-            Log::info('File stored temporarily', [
-                'temp_path' => $tempPath,
-                'full_path' => $fullPath,
-                'size_mb' => $fileSizeMB
-            ]);
+            $storedName = $file->store('uploads', 'private');
+            $fullPath = Storage::disk('private')->path($storedName);
 
             // الحصول على عدد الصفحات
             $pageCount = $this->barcodeService->getPdfPageCount($fullPath);
@@ -144,27 +138,15 @@ class UploadController extends Controller
             // إنشاء سجل الرفع
             $upload = Upload::create([
                 'original_filename' => $file->getClientOriginalName(),
-                'stored_filename' => $tempPath, // تخزين المسار المؤقت
+                'stored_filename' => $storedName,
                 'total_pages' => $pageCount,
                 'file_size_mb' => $fileSizeMB,
                 'status' => 'processing',
                 'user_id' => auth()->id(),
             ]);
 
-            // ✅ تحديث سريع للتقدم قبل البدء
-            Redis::setex("upload_progress:{$upload->id}", 3600, 10);
-            Redis::setex("upload_message:{$upload->id}", 3600, 'بدء معالجة الملف...');
-
             // معالجة PDF وتقسيم الأقسام
             $groups = $this->barcodeService->processPdf($upload);
-
-            // ✅ تنظيف الملف المؤقت بعد المعالجة
-            try {
-                Storage::disk('local')->delete($tempPath);
-                Log::info('Temporary file cleaned up', ['path' => $tempPath]);
-            } catch (\Exception $e) {
-                Log::warning('Failed to cleanup temp file', ['error' => $e->getMessage()]);
-            }
 
             // تحديث حالة الرفع
             $upload->update([
@@ -179,18 +161,13 @@ class UploadController extends Controller
                 }
             }
 
-            Log::info('Processing completed successfully', [
-                'upload_id' => $upload->id,
-                'groups_count' => count($groups)
-            ]);
+            Log::info('Processing completed successfully');
 
             return response()->json([
                 'success' => true,
                 'message' => "تمت معالجة الملف بنجاح ({$fileSizeMB} MB). تم إنشاء " . count($groups) . " قسم.",
                 'barcodes' => $barcodes,
                 'upload_id' => $upload->id,
-                'groups_count' => count($groups),
-                'total_pages' => $pageCount,
                 'service_used' => get_class($this->barcodeService),
                 'redirect_url' => route('uploads.show', $upload)
             ]);
@@ -200,15 +177,6 @@ class UploadController extends Controller
                 'error_message' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-
-            //  تنظيف الملف المؤقت في حالة الخطأ
-            if (isset($tempPath)) {
-                try {
-                    Storage::disk('local')->delete($tempPath);
-                } catch (\Exception $cleanupError) {
-                    Log::error('Temp cleanup failed on error', ['error' => $cleanupError->getMessage()]);
-                }
-            }
 
             if (isset($upload)) {
                 $upload->update([
