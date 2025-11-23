@@ -201,8 +201,8 @@ class UploadController extends Controller
                 'trace' => $e->getTraceAsString()
             ]);
 
-            // ✅ تنظيف الملف المؤقت في حالة الخطأ
-            if (isset($tempPath) {
+            //  تنظيف الملف المؤقت في حالة الخطأ
+            if (isset($tempPath)) {
                 try {
                     Storage::disk('local')->delete($tempPath);
                 } catch (\Exception $cleanupError) {
