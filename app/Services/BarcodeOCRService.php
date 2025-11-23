@@ -41,11 +41,15 @@ class BarcodeOCRService
             throw new Exception("PDF file not found: " . $pdfPath);
         }
 
+        // ✅ تنظيف الـ groups القديمة لهذا الـ upload قبل البدء
+        Group::where('upload_id', $upload->id)->delete();
+        Log::info("Cleaned up existing groups for upload", ['upload_id' => $upload->id]);
+
         $this->updateProgress(5, 'جاري تهيئة الملف...');
         $this->pdfHash = md5($pdfPath);
         $pageCount = $this->getPdfPageCount($pdfPath);
 
-        //  قراءة الباركود الفاصل من الصفحة الأولى
+        // قراءة الباركود الفاصل من الصفحة الأولى
         $separatorBarcode = $this->readPageBarcode($pdfPath, 1) ?? 'default_barcode';
         Log::info("Using separator barcode", ['separator' => $separatorBarcode]);
 
@@ -110,16 +114,23 @@ class BarcodeOCRService
             $outputPath = "{$fullDir}/{$filenameSafe}";
             $dbPath = "{$directory}/{$filenameSafe}";
 
-            // ✅ التحقق من أن الملف مش موجود مسبقاً
+            // ✅ التعديل: إذا الملف موجود، احذفه واستبدله بالجديد
             if (file_exists($outputPath)) {
-                Log::warning("File already exists, skipping", ['file' => $outputPath]);
-                continue;
+                Log::warning("File already exists, replacing with new version", ['file' => $outputPath]);
+                unlink($outputPath); // احذف الملف القديم
+            }
+
+            // ✅ إذا الـ group موجود في الـ DB، احذفه
+            $existingGroup = Group::where('pdf_path', $dbPath)->first();
+            if ($existingGroup) {
+                $existingGroup->delete();
+                Log::debug("Deleted existing group from database", ['pdf_path' => $dbPath]);
             }
 
             $pdfCreated = $this->createQuickPdf($pdfPath, $pages, $outputPath);
 
-            if ($pdfCreated && filesize($outputPath) > 1000) { // ✅ تحقق أن الملف مش فاضي
-                Log::debug("PDF created successfully", [
+            if ($pdfCreated && filesize($outputPath) > 1000) {
+                Log::debug("PDF created/replaced successfully", [
                     'file' => $outputPath, 
                     'pages_count' => count($pages),
                     'file_size' => filesize($outputPath)
@@ -133,14 +144,18 @@ class BarcodeOCRService
                     'upload_id' => $upload->id
                 ]);
                 $createdGroups[] = $group;
+                
+                Log::debug("Group created successfully", [
+                    'group_id' => $group->id,
+                    'pdf_path' => $dbPath
+                ]);
             } else {
-                Log::warning("Failed creating PDF group or file is empty", [
+                Log::warning("Failed creating PDF group", [
                     'filename' => $filenameSafe, 
                     'pages' => $pages,
                     'file_size' => file_exists($outputPath) ? filesize($outputPath) : 0
                 ]);
                 
-                // ✅ حذف الملف الفاضي
                 if (file_exists($outputPath)) {
                     unlink($outputPath);
                 }
