@@ -20,12 +20,18 @@ class BarcodeOCRService
    /**
      * المعالجة الرئيسية للملف مع تتبع التقدم - الإصدار المصحح
      */
+  
     public function processPdf($upload)
     {
-        // تعيين معرف الرفع للتتبع
-        $this->uploadId = $upload->id;
+        // ✅ التحقق من أن المعالجة ما بتتكرر لنفس الـ upload
+        if (Redis::get("processing_{$upload->id}")) {
+            Log::warning("Processing already in progress", ['upload_id' => $upload->id]);
+            return [];
+        }
+        
+        Redis::setex("processing_{$upload->id}", 3600, 'true');
 
-        // موارد أعلى لملفات كبيرة
+        $this->uploadId = $upload->id;
         set_time_limit(1200);
         ini_set('memory_limit', '1024M');
 
@@ -35,83 +41,52 @@ class BarcodeOCRService
             throw new Exception("PDF file not found: " . $pdfPath);
         }
 
-        // تحديث التقدم - البدء
         $this->updateProgress(5, 'جاري تهيئة الملف...');
-
         $this->pdfHash = md5($pdfPath);
         $pageCount = $this->getPdfPageCount($pdfPath);
 
-        Log::info("Processing PDF", ['path' => $pdfPath, 'pages' => $pageCount]);
-
-        // تحديث التقدم - قراءة الباركود
-        $this->updateProgress(15, 'جاري قراءة الباركود الفاصل...');
-
+        // ✅ قراءة الباركود الفاصل من الصفحة الأولى
         $separatorBarcode = $this->readPageBarcode($pdfPath, 1) ?? 'default_barcode';
         Log::info("Using separator barcode", ['separator' => $separatorBarcode]);
 
-        // تحديث التقدم - تقسيم الصفحات
         $this->updateProgress(25, 'جاري تقسيم الصفحات إلى أقسام...');
 
+        // ✅ خوارزمية تقسيم صحيحة
         $sections = [];
         $currentSection = [];
 
-        // ✅ التعديل: خوارزمية تقسيم صحيحة
         for ($page = 1; $page <= $pageCount; $page++) {
             $barcode = $this->readPageBarcode($pdfPath, $page);
 
-            // تحديث تقدم جزئي لكل صفحة
             $pageProgress = 25 + (($page / $pageCount) * 20);
             $this->updateProgress($pageProgress, "جاري معالجة الصفحة $page من $pageCount...");
 
             if ($barcode === $separatorBarcode) {
-                // ✅ التعديل: إذا وجدنا باركود فاصل، ننهي القسم الحالي ونبدأ قسم جديد
+                // ✅ وجدنا باركود فاصل - ننهي القسم الحالي إذا مش فارغ
                 if (!empty($currentSection)) {
                     $sections[] = $currentSection;
                     Log::debug("Section completed", [
                         'section_number' => count($sections),
-                        'pages' => $currentSection,
-                        'triggered_by_barcode_page' => $page
+                        'pages' => $currentSection
                     ]);
                 }
-                // ✅ التعديل: نبدأ قسم جديد بدون إضافة صفحة الباركود
-                $currentSection = [];
-                Log::debug("New section started after barcode page", ['barcode_page' => $page]);
+                $currentSection = []; // ابدأ قسم جديد فارغ
             } else {
-                // ✅ التعديل: إضافة الصفحة العادية فقط للقسم الحالي
+                // ✅ صفحة عادية - أضفها للقسم الحالي
                 $currentSection[] = $page;
             }
         }
 
-        // ✅ التعديل: إضافة آخر قسم إذا كان فيه صفحات
+        // ✅ إضافة آخر قسم إذا مش فارغ
         if (!empty($currentSection)) {
             $sections[] = $currentSection;
-            Log::debug("Final section added", [
-                'section_number' => count($sections),
-                'pages' => $currentSection
-            ]);
         }
-
-        // ✅ التعديل: تنظيف الأقسام الفارغة
-        $sections = array_filter($sections, function($section) {
-            return !empty($section);
-        });
 
         Log::info("Total sections found", [
             'count' => count($sections),
             'sections_pages' => array_map('count', $sections)
         ]);
 
-        // ✅ التعديل: التحقق من أن مجموع الصفحات يساوي العدد الأصلي
-        $totalPagesInSections = array_sum(array_map('count', $sections));
-        if ($totalPagesInSections !== $pageCount) {
-            Log::warning("Page count mismatch", [
-                'total_pages_in_sections' => $totalPagesInSections,
-                'original_page_count' => $pageCount,
-                'difference' => $pageCount - $totalPagesInSections
-            ]);
-        }
-
-        // تحديث التقدم - إنشاء الملفات
         $this->updateProgress(60, 'جاري إنشاء ملفات PDF للمجموعات...');
 
         $createdGroups = [];
@@ -120,7 +95,6 @@ class BarcodeOCRService
         foreach ($sections as $index => $pages) {
             if (empty($pages)) continue;
 
-            // تحديث التقدم لكل قسم
             $sectionProgress = 60 + (($index / $totalSections) * 35);
             $this->updateProgress($sectionProgress, "جاري إنشاء المجموعة " . ($index + 1) . " من $totalSections...");
 
@@ -136,13 +110,18 @@ class BarcodeOCRService
             $outputPath = "{$fullDir}/{$filenameSafe}";
             $dbPath = "{$directory}/{$filenameSafe}";
 
+            // ✅ التحقق من أن الملف مش موجود مسبقاً
+            if (file_exists($outputPath)) {
+                Log::warning("File already exists, skipping", ['file' => $outputPath]);
+                continue;
+            }
+
             $pdfCreated = $this->createQuickPdf($pdfPath, $pages, $outputPath);
 
-            if ($pdfCreated) {
+            if ($pdfCreated && filesize($outputPath) > 1000) { // ✅ تحقق أن الملف مش فاضي
                 Log::debug("PDF created successfully", [
                     'file' => $outputPath, 
                     'pages_count' => count($pages),
-                    'page_numbers' => $pages,
                     'file_size' => filesize($outputPath)
                 ]);
                 
@@ -155,23 +134,28 @@ class BarcodeOCRService
                 ]);
                 $createdGroups[] = $group;
             } else {
-                Log::warning("Failed creating PDF group", [
+                Log::warning("Failed creating PDF group or file is empty", [
                     'filename' => $filenameSafe, 
                     'pages' => $pages,
-                    'section_index' => $index
+                    'file_size' => file_exists($outputPath) ? filesize($outputPath) : 0
                 ]);
+                
+                // ✅ حذف الملف الفاضي
+                if (file_exists($outputPath)) {
+                    unlink($outputPath);
+                }
             }
         }
 
-        // تحديث التقدم - الانتهاء
         $this->updateProgress(100, 'تم الانتهاء من المعالجة!');
 
         Log::info("Processing completed", [
             'sections_created' => count($createdGroups),
-            'total_pages_in_sections' => $totalPagesInSections,
-            'original_page_count' => $pageCount,
             'group_files' => array_map(fn($g) => $g->pdf_path, $createdGroups)
         ]);
+
+        // ✅ تنظيف الـ Redis lock
+        Redis::del("processing_{$upload->id}");
 
         return $createdGroups;
     }
@@ -206,14 +190,15 @@ class BarcodeOCRService
     /**
      * إنشاء اسم ملف باستخدام OCR لاستخراج النص
      */
+  
     private function generateFilenameWithOCR($pdfPath, $pages, $index, $barcode)
     {
         $firstPage = $pages[0];
 
-        // جرب pdftotext أولاً مع كاش
+        // جرب pdftotext أولاً
         $content = $this->extractWithPdftotext($pdfPath, $firstPage);
 
-        // قرار ذكي لتشغيل OCR — ليس فقط طول النص
+        // إذا النص مش واضح، استخدم OCR
         if (
             empty($content) ||
             mb_strlen($content) < 40 ||
@@ -223,37 +208,53 @@ class BarcodeOCRService
             $content = $this->extractTextWithOCR($pdfPath, $firstPage);
         }
 
-        // 1. البحث عن رقم القيد
+        Log::debug("OCR Content for filename", [
+            'page' => $firstPage,
+            'content_length' => mb_strlen($content),
+            'content_sample' => mb_substr($content, 0, 100)
+        ]);
+
+        // 1. البحث عن رقم السند - تحسين patterns
+        $sanedNumber = $this->findDocumentNumber($content, 'سند', [
+            'رقم\s*السند\s*[:\-]?\s*(\d{2,})', // رقم السند: 762
+            'السند\s*[:\-]?\s*(\d{2,})',      // السند: 762  
+            'سند\s*[:\-]?\s*(\d{2,})',        // سند: 762
+            'سند\s*رقم\s*[:\-]?\s*(\d{2,})',  // سند رقم: 762
+            '(\d{3})\s*سند',                  // 762 سند
+            'سند\s*(\d{3})'                   // سند 762
+        ]);
+        
+        if ($sanedNumber) {
+            Log::debug("Found document number", [
+                'type' => 'سند', 
+                'value' => $sanedNumber,
+                'page' => $firstPage
+            ]);
+            return $this->sanitizeFilename($sanedNumber);
+        }
+
+        // 2. البحث عن رقم القيد
         $qeedNumber = $this->findDocumentNumber($content, 'قيد', [
             'رقم\s*القيد\s*[:\-]?\s*(\d+)',
             'القيد\s*[:\-]?\s*(\d+)',
             'قيد\s*[:\-]?\s*(\d+)',
-            'رقم\s*[:\-]?\s*(\d+).*قيد'
         ]);
-        if ($qeedNumber) return $this->sanitizeFilename($qeedNumber);
+        if ($qeedNumber) {
+            Log::debug("Found qeed number", ['value' => $qeedNumber]);
+            return $this->sanitizeFilename($qeedNumber);
+        }
 
-        // 2. البحث عن رقم الفاتورة
-        $invoiceNumber = $this->findDocumentNumber($content, 'فاتورة', [
-            'رقم\s*الفاتورة\s*[:\-]?\s*(\d+)',
-            'الفاتورة\s*[:\-]?\s*(\d+)',
-            'فاتورة\s*[:\-]?\s*(\d+)'
-        ]);
-        if ($invoiceNumber) return $this->sanitizeFilename($invoiceNumber);
-
-        // 3. البحث عن رقم السند
-        $sanedNumber = $this->findDocumentNumber($content, 'سند', [
-            'رقم\s*السند\s*[:\-]?\s*(\d+)',
-            'السند\s*[:\-]?\s*(\d+)',
-            'سند\s*[:\-]?\s*(\d+)'
-        ]);
-        if ($sanedNumber) return $this->sanitizeFilename($sanedNumber);
-
-        // 4. البحث عن تاريخ
+        // 3. البحث عن تاريخ
         $date = $this->findDate($content);
-        if ($date) return $this->sanitizeFilename($date);
+        if ($date) {
+            Log::debug("Found date", ['value' => $date]);
+            return $this->sanitizeFilename($date);
+        }
 
-        // 5. fallback
-        return $this->sanitizeFilename($barcode . '_' . ($index + 1));
+        // 4. fallback - استخدام الباركود + رقم القسم
+        $fallbackName = $barcode . '_' . ($index + 1);
+        Log::debug("Using fallback name", ['name' => $fallbackName]);
+        return $this->sanitizeFilename($fallbackName);
     }
 
     /**

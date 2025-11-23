@@ -161,30 +161,33 @@ class UploadController extends Controller
             ], 500);
         }
     }
-
-    // دالة جديدة للمعالجة
+    
     public function process($uploadId)
     {
         try {
             $upload = Upload::findOrFail($uploadId);
             
+            // ✅ التحقق من أن المعالجة ما بتتكرر
             if ($upload->status !== 'processing') {
                 return response()->json([
                     'success' => false,
-                    'error' => 'الملف ليس في حالة معالجة'
+                    'error' => 'الملف تم معالجته مسبقاً'
                 ]);
             }
 
-            $fullPath = Storage::disk('private')->path($upload->stored_filename);
+            // ✅ تحديث الحالة فوراً لمنع التكرار
+            $upload->update(['status' => 'processing_started']);
+
+            $fullPath = Storage::disk('local')->path($upload->stored_filename);
             
             // الحصول على عدد الصفحات
             $pageCount = $this->barcodeService->getPdfPageCount($fullPath);
             $upload->update(['total_pages' => $pageCount]);
 
-            // معالجة PDF
+            // معالجة PDF مرة واحدة فقط
             $groups = $this->barcodeService->processPdf($upload);
 
-            // تحديث الحالة
+            // تحديث الحالة النهائية
             $upload->update([
                 'status' => 'completed',
                 'error_message' => null
@@ -197,14 +200,18 @@ class UploadController extends Controller
                 }
             }
 
-            Log::info('Processing completed successfully');
+            Log::info('Processing completed successfully', [
+                'upload_id' => $upload->id,
+                'groups_count' => count($groups)
+            ]);
 
             return response()->json([
                 'success' => true,
                 'message' => "تمت معالجة الملف بنجاح. تم إنشاء " . count($groups) . " قسم.",
                 'groups_count' => count($groups),
                 'total_pages' => $pageCount,
-                'barcodes' => $barcodes
+                'barcodes' => $barcodes,
+                'group_files' => array_map(fn($g) => $g->pdf_path, $groups)
             ]);
 
         } catch (\Exception $e) {
