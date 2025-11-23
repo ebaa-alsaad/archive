@@ -17,7 +17,7 @@ class BarcodeOCRService
     private $pdfHash = null;
     private $uploadId = null; // إضافة لتتبع الرفع
 
-    /**
+   /**
      * المعالجة الرئيسية للملف مع تتبع التقدم
      */
     public function processPdf($upload)
@@ -29,8 +29,7 @@ class BarcodeOCRService
         set_time_limit(1200);
         ini_set('memory_limit', '1024M');
 
-        // $pdfPath = Storage::disk('private')->path($upload->stored_filename);
-           $pdfPath = Storage::disk('local')->path($upload->stored_filename);
+        $pdfPath = Storage::disk('local')->path($upload->stored_filename);
 
         if (!file_exists($pdfPath)) {
             throw new Exception("PDF file not found: " . $pdfPath);
@@ -56,6 +55,11 @@ class BarcodeOCRService
         $sections = [];
         $currentSection = [];
 
+        // ✅ التعديل: إضافة أول قسم إذا كانت الصفحة الأولى فيها باركود
+        if ($this->readPageBarcode($pdfPath, 1) === $separatorBarcode) {
+            $currentSection = [1]; // إضافة الصفحة الأولى كبداية قسم
+        }
+
         for ($page = 1; $page <= $pageCount; $page++) {
             $barcode = $this->readPageBarcode($pdfPath, $page);
 
@@ -64,6 +68,9 @@ class BarcodeOCRService
             $this->updateProgress($pageProgress, "جاري معالجة الصفحة $page من $pageCount...");
 
             if ($barcode === $separatorBarcode) {
+                // ✅ التعديل: إضافة الصفحة الحالية (صفحة الباركود) للقسم الحالي
+                $currentSection[] = $page;
+                
                 if (!empty($currentSection)) {
                     $sections[] = $currentSection;
                 }
@@ -73,6 +80,7 @@ class BarcodeOCRService
             }
         }
 
+        // ✅ التعديل: التأكد من إضافة آخر قسم
         if (!empty($currentSection)) {
             $sections[] = $currentSection;
         }
@@ -107,7 +115,12 @@ class BarcodeOCRService
             $pdfCreated = $this->createQuickPdf($pdfPath, $pages, $outputPath);
 
             if ($pdfCreated) {
-                Log::debug("PDF created", ['file' => $outputPath, 'pages' => count($pages)]);
+                Log::debug("PDF created", [
+                    'file' => $outputPath, 
+                    'pages' => count($pages),
+                    'page_numbers' => $pages // تسجيل أرقام الصفحات للتdebug
+                ]);
+                
                 $group = Group::create([
                     'code' => $separatorBarcode,
                     'pdf_path' => $dbPath,
@@ -126,7 +139,8 @@ class BarcodeOCRService
 
         Log::info("Processing completed", [
             'sections_created' => count($createdGroups),
-            'section_names' => array_map(fn($g) => $g->pdf_path, $createdGroups)
+            'total_pages_in_sections' => array_sum(array_map('count', $sections)),
+            'original_page_count' => $pageCount
         ]);
 
         return $createdGroups;
@@ -348,31 +362,73 @@ class BarcodeOCRService
     }
 
     /**
-     * إنشاء PDF سريع باستخدام ghostscript
-     */
-    private function createQuickPdf($pdfPath, $pages, $outputPath)
-    {
-        try {
-            $firstPage = min($pages);
-            $lastPage = max($pages);
+ * إنشاء PDF باستخدام pdftk (بديل أكثر موثوقية)
+ */
+private function createQuickPdf($pdfPath, $pages, $outputPath)
+{
+    try {
+        // استخدم pdftk إذا متوفر (أكثر موثوقية)
+        $pagesString = implode(' ', $pages);
+        $cmd = sprintf(
+            'pdftk %s cat %s output %s 2>&1',
+            escapeshellarg($pdfPath),
+            $pagesString,
+            escapeshellarg($outputPath)
+        );
 
-            // استخدام إعدادات مستقرة وعالية الجودة
-            $cmd = sprintf(
-                'gs -q -dNOPAUSE -dBATCH -sDEVICE=pdfwrite -dCompatibilityLevel=1.7 -dPDFSETTINGS=/prepress -dFirstPage=%d -dLastPage=%d -sOutputFile=%s %s 2>&1',
-                intval($firstPage),
-                intval($lastPage),
-                escapeshellarg($outputPath),
-                escapeshellarg($pdfPath)
-            );
+        exec($cmd, $output, $returnVar);
 
-            exec($cmd, $output, $returnVar);
-
-            return $returnVar === 0 && file_exists($outputPath);
-        } catch (Exception $e) {
-            Log::warning("Quick PDF creation failed", ['error' => $e->getMessage()]);
-            return false;
+        if ($returnVar === 0 && file_exists($outputPath) && filesize($outputPath) > 0) {
+            Log::debug("PDF created successfully with pdftk", [
+                'output_path' => $outputPath,
+                'file_size' => filesize($outputPath),
+                'pages' => $pages
+            ]);
+            return true;
         }
+
+        // fallback إلى ghostscript إذا pdftk فشل
+        Log::warning("pdftk failed, trying ghostscript", ['error' => implode("\n", $output)]);
+        
+        $firstPage = min($pages);
+        $lastPage = max($pages);
+
+        $cmd = sprintf(
+            'gs -q -dNOPAUSE -dBATCH -sDEVICE=pdfwrite -dCompatibilityLevel=1.7 -dPDFSETTINGS=/prepress -dFirstPage=%d -dLastPage=%d -sOutputFile=%s %s 2>&1',
+            intval($firstPage),
+            intval($lastPage),
+            escapeshellarg($outputPath),
+            escapeshellarg($pdfPath)
+        );
+
+        exec($cmd, $output, $returnVar);
+
+        $success = $returnVar === 0 && file_exists($outputPath) && filesize($outputPath) > 0;
+        
+        if ($success) {
+            Log::debug("PDF created successfully with ghostscript", [
+                'output_path' => $outputPath,
+                'file_size' => filesize($outputPath)
+            ]);
+        } else {
+            Log::error("PDF creation failed with both methods", [
+                'pages' => $pages,
+                'pdftk_output' => $output,
+                'gs_output' => $output
+            ]);
+        }
+
+        return $success;
+
+    } catch (Exception $e) {
+        Log::warning("Quick PDF creation failed", [
+            'error' => $e->getMessage(),
+            'pages' => $pages,
+            'output_path' => $outputPath
+        ]);
+        return false;
     }
+}
 
     /**
      * تنظيف اسم الملف
