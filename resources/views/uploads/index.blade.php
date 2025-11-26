@@ -75,6 +75,7 @@
                                        {{-- START: New stylish ZIP button classes --}}
                                        class="bg-gradient-to-r from-purple-600 to-indigo-600 text-white py-2 px-4 rounded-xl text-sm font-semibold inline-flex items-center
                                               shadow-lg hover:shadow-xl hover:from-purple-700 hover:to-indigo-700 transition duration-300 transform hover:scale-[1.02]">
+                                       {{-- END: New stylish ZIP button classes --}}
                                         <i class="fa-solid fa-file-archive ml-2"></i> تحميل ZIP
                                     </a>
                                 @endif
