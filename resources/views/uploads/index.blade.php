@@ -72,11 +72,8 @@
                             <div class="flex flex-col space-y-2 items-center justify-center">
                                 @if($upload->groups->count() > 0 && $upload->groups->every(fn($group) => $group->pdf_path != null))
                                     <a href="{{ route('uploads.download_all_groups', $upload->id) }}"
-                                       {{-- START: New stylish ZIP button classes --}}
-                                       class="bg-gradient-to-r from-purple-600 to-indigo-600 text-white py-2 px-4 rounded-xl text-sm font-semibold inline-flex items-center
-                                              shadow-lg hover:shadow-xl hover:from-purple-700 hover:to-indigo-700 transition duration-300 transform hover:scale-[1.02]">
-                                       {{-- END: New stylish ZIP button classes --}}
-                                        <i class="fa-solid fa-file-archive ml-2"></i> تحميل ZIP
+                                       class="text-purple-600 hover:text-purple-800 transition transform hover:scale-105 flex items-center bg-purple-50 px-3 py-1 rounded-full text-xs font-bold shadow-sm">
+                                        <i class="fa-solid fa-file-archive ml-1"></i> تحميل ZIP
                                     </a>
                                 @endif
 
