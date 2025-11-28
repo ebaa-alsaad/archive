@@ -15,7 +15,7 @@ class BarcodeOCRService
     private $textCache = [];
     private $ocrCache = [];
     private $pdfHash = null;
-    private $uploadId = null; 
+    private $uploadId = null;
 
 
     public function processPdf($upload, $disk = 'private')
@@ -26,11 +26,11 @@ class BarcodeOCRService
             return [];
         }
 
-        Redis::setex("processing_{$upload->id}", 3600, 'true');
+        Redis::setex("processing_{$upload->id}", 7200, 'true');
 
         $this->uploadId = $upload->id;
-        set_time_limit(1200);
-        ini_set('memory_limit', '1024M');
+        set_time_limit(3600 );
+        ini_set('memory_limit', '2048M');
 
         $pdfPath = Storage::disk($disk)->path($upload->stored_filename);
 
@@ -225,12 +225,12 @@ class BarcodeOCRService
 
         // 1. البحث عن رقم السند - تحسين patterns
         $sanedNumber = $this->findDocumentNumber($content, 'سند', [
-            'رقم\s*السند\s*[:\-]?\s*(\d{2,})', 
-            'السند\s*[:\-]?\s*(\d{2,})',      
-            'سند\s*[:\-]?\s*(\d{2,})',        
-            'سند\s*رقم\s*[:\-]?\s*(\d{2,})', 
-            '(\d{3})\s*سند',                 
-            'سند\s*(\d{3})'                
+            'رقم\s*السند\s*[:\-]?\s*(\d{2,})',
+            'السند\s*[:\-]?\s*(\d{2,})',
+            'سند\s*[:\-]?\s*(\d{2,})',
+            'سند\s*رقم\s*[:\-]?\s*(\d{2,})',
+            '(\d{3})\s*سند',
+            'سند\s*(\d{3})'
         ]);
 
         if ($sanedNumber) {
@@ -429,8 +429,8 @@ class BarcodeOCRService
             exec($cmd, $output, $returnVar);
 
             // التحقق من النتيجة
-            $success = $returnVar === 0 && 
-                    file_exists($outputPath) && 
+            $success = $returnVar === 0 &&
+                    file_exists($outputPath) &&
                     filesize($outputPath) > 10000; // على الأقل 10KB
 
             if ($success) {
@@ -446,7 +446,7 @@ class BarcodeOCRService
                     'output' => $output,
                     'file_size' => file_exists($outputPath) ? filesize($outputPath) : 0
                 ]);
-                
+
                 // محاولة بديلة باستخدام pdftk إذا كان متوفراً
                 if ($this->tryPdftk($pdfPath, $pages, $outputPath)) {
                     return true;
@@ -471,7 +471,7 @@ class BarcodeOCRService
             // تثبيت pdftk إذا لم يكن موجوداً
             $cmdCheck = 'which pdftk 2>&1';
             exec($cmdCheck, $outputCheck, $returnCheck);
-            
+
             if ($returnCheck !== 0) {
                 Log::warning("pdftk not installed");
                 return false;
@@ -488,7 +488,7 @@ class BarcodeOCRService
             exec($cmd, $output, $returnVar);
 
             return $returnVar === 0 && file_exists($outputPath) && filesize($outputPath) > 10000;
-            
+
         } catch (Exception $e) {
             Log::warning("pdftk fallback failed", ['error' => $e->getMessage()]);
             return false;
