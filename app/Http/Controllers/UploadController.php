@@ -103,11 +103,11 @@ class UploadController extends Controller
 
     public function store(Request $request)
     {
-        ini_set('upload_max_filesize', '70M');
-        ini_set('post_max_size', '70M');
-        ini_set('max_execution_time', 600);
-        ini_set('max_input_time', 600);
-        ini_set('memory_limit', '512M');
+        ini_set('upload_max_filesize', '250M');
+        ini_set('post_max_size', '250M');
+        ini_set('max_execution_time', 1200);
+        ini_set('max_input_time', 1200);
+        ini_set('memory_limit', '1024M');
 
         Log::info('Upload request received', [
             'has_file' => $request->hasFile('pdf_file'),
@@ -116,7 +116,7 @@ class UploadController extends Controller
 
         try {
             $request->validate([
-                'pdf_file' => 'required|mimes:pdf|max:71680'
+                'pdf_file' => 'required|mimes:pdf|max:256000'
             ]);
 
             $file = $request->file('pdf_file');
