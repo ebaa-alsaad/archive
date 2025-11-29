@@ -182,12 +182,14 @@ function updateFileInput(files) {
             return;
         }
 
-        if (fileSizeMB > 200) {
-            showToast('حجم الملف يجب أن يكون أقل من 200MB', 'error');
+        if (fileSizeMB > 250) {
+            showToast('حجم الملف يجب أن يكون أقل من 250MB', 'error');
             resetFileInput();
             return;
         }
-
+        if (fileSizeMB > 100) {
+            showToast('الملف كبير وقد تستغرق المعالجة وقتاً أطول', 'warning');
+        }
         fileNameDisplay.textContent = file.name;
         fileNameDisplay.classList.remove('hidden');
 
@@ -287,6 +289,7 @@ document.getElementById('upload-form').addEventListener('submit', function(e) {
     const xhr = new XMLHttpRequest();
 
     uploadProgressContainer.classList.remove('hidden');
+    xhr.timeout = 30 * 60 * 1000;
 
     xhr.upload.addEventListener("progress", function(event) {
         if (event.lengthComputable) {
@@ -428,7 +431,8 @@ function showResults(data) {
         `من أصل ${totalPages} صفحة`;
 
     //  تحميل ZIP تلقائياً
-        if (currentUploadId) {
+        if (currentUploadId && groupsCount > 0) {
+        showToast('جاري تحميل ملف ZIP..', 'info');
         setTimeout(() => {
             window.location.href = `/uploads/${currentUploadId}/download-all`;
         }, 1000);
