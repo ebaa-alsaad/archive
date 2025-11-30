@@ -28,56 +28,35 @@ class ProcessPdfJob implements ShouldQueue
         $upload = Upload::find($this->uploadId);
         if (!$upload) return;
 
-        $tmpFile = sys_get_temp_dir() . '/upload_' . $upload->id . '_' . uniqid() . '.pdf';
-
         try {
             $upload->update(['status' => 'processing']);
 
-            // Download S3/MinIO file to temp local path
-            $s3Disk = Storage::disk('s3');
-            $stream = $s3Disk->readStream($upload->stored_filename);
+            // المسار الكامل للملف
+            $filePath = $upload->stored_filename;
 
-            if ($stream === false) {
-                throw new \Exception('Unable to open S3 stream for ' . $upload->stored_filename);
+            if (!Storage::disk('public')->exists($filePath)) {
+                throw new \Exception('الملف غير موجود: ' . $filePath);
             }
 
-            $tmpFp = fopen($tmpFile, 'w');
-            if (!$tmpFp) {
-                throw new \Exception('Unable to create temporary file: ' . $tmpFile);
-            }
+            // الحصول على المسار الفعلي للملف
+            $localPath = Storage::disk('public')->path($filePath);
 
-            while (!feof($stream)) {
-                fwrite($tmpFp, fread($stream, 1024 * 1024)); // قراءة 1MB chunks
-            }
+            // معالجة الملف باستخدام الخدمة المحسنة
+            $barcodeService->processPdfFromLocalPath($localPath, $upload);
 
-            fclose($tmpFp);
-            if (is_resource($stream)) fclose($stream);
-
-            // Call service to process the local file
-            $barcodeService->processPdfFromLocalPath($upload);
-
-            // update upload (status & pages)
-            $upload->update([
-                'status' => 'completed',
-                'total_pages' => $upload->total_pages ?? 0
-            ]);
+            Log::info('PDF processing completed', ['upload_id' => $this->uploadId]);
 
         } catch (\Exception $e) {
             Log::error('ProcessPdfJob failed', [
                 'upload_id' => $this->uploadId,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
+                'file_path' => $upload->stored_filename ?? 'unknown'
             ]);
 
             $upload->update([
                 'status' => 'failed',
                 'error_message' => $e->getMessage()
             ]);
-
-        } finally {
-            // cleanup temporary file
-            if (file_exists($tmpFile)) {
-                @unlink($tmpFile);
-            }
         }
     }
 }

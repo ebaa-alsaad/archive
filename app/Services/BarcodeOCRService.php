@@ -3,7 +3,7 @@
 namespace App\Services;
 
 use Exception;
-use App\Models\{Group,Upload};
+use App\Models\{Group, Upload};
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Facades\Storage;
@@ -17,10 +17,12 @@ class BarcodeOCRService
     private $pdfHash = null;
     private $uploadId = null;
 
-
-    public function processPdf($upload, $disk = 'private')
+    /**
+     * المعالجة الرئيسية للملفات المحلية
+     */
+    public function processPdfFromLocalPath($localPath, Upload $upload)
     {
-        //  التحقق من أن المعالجة ما بتتكرر لنفس الـ upload
+        // التحقق من أن المعالجة ما بتتكرر لنفس الـ upload
         if (Redis::get("processing_{$upload->id}")) {
             Log::warning("Processing already in progress", ['upload_id' => $upload->id]);
             return [];
@@ -29,40 +31,42 @@ class BarcodeOCRService
         Redis::setex("processing_{$upload->id}", 7200, 'true');
 
         $this->uploadId = $upload->id;
-        set_time_limit(3600 );
+        set_time_limit(3600);
         ini_set('memory_limit', '2048M');
 
-        $pdfPath = Storage::disk($disk)->path($upload->stored_filename);
-
-        if (!file_exists($pdfPath)) {
-            throw new Exception("PDF file not found: " . $pdfPath);
+        if (!file_exists($localPath)) {
+            throw new Exception("PDF file not found: " . $localPath);
         }
 
+        // تنظيف المجموعات القديمة
         Group::where('upload_id', $upload->id)->delete();
         Log::info("Cleaned up existing groups for upload", ['upload_id' => $upload->id]);
 
         $this->updateProgress(5, 'جاري تهيئة الملف...');
-        $this->pdfHash = md5($pdfPath);
-        $pageCount = $this->getPdfPageCount($pdfPath);
+        $this->pdfHash = md5($localPath);
+        $pageCount = $this->getPdfPageCount($localPath);
+
+        // تحديث عدد الصفحات في قاعدة البيانات
+        $upload->update(['total_pages' => $pageCount]);
 
         // قراءة الباركود الفاصل من الصفحة الأولى
-        $separatorBarcode = $this->readPageBarcode($pdfPath, 1) ?? 'default_barcode';
+        $separatorBarcode = $this->readPageBarcode($localPath, 1) ?? 'default_barcode';
         Log::info("Using separator barcode", ['separator' => $separatorBarcode]);
 
         $this->updateProgress(25, 'جاري تقسيم الصفحات إلى أقسام...');
 
-        //  خوارزمية تقسيم صحيحة
+        // خوارزمية تقسيم صحيحة
         $sections = [];
         $currentSection = [];
 
         for ($page = 1; $page <= $pageCount; $page++) {
-            $barcode = $this->readPageBarcode($pdfPath, $page);
+            $barcode = $this->readPageBarcode($localPath, $page);
 
             $pageProgress = 25 + (($page / $pageCount) * 20);
             $this->updateProgress($pageProgress, "جاري معالجة الصفحة $page من $pageCount...");
 
             if ($barcode === $separatorBarcode) {
-                //  وجدنا باركود فاصل - ننهي القسم الحالي إذا مش فارغ
+                // وجدنا باركود فاصل - ننهي القسم الحالي إذا مش فارغ
                 if (!empty($currentSection)) {
                     $sections[] = $currentSection;
                     Log::debug("Section completed", [
@@ -72,12 +76,12 @@ class BarcodeOCRService
                 }
                 $currentSection = []; // ابدأ قسم جديد فارغ
             } else {
-                //  صفحة عادية - أضفها للقسم الحالي
+                // صفحة عادية - أضفها للقسم الحالي
                 $currentSection[] = $page;
             }
         }
 
-        //  إضافة آخر قسم إذا مش فارغ
+        // إضافة آخر قسم إذا مش فارغ
         if (!empty($currentSection)) {
             $sections[] = $currentSection;
         }
@@ -98,11 +102,11 @@ class BarcodeOCRService
             $sectionProgress = 60 + (($index / $totalSections) * 35);
             $this->updateProgress($sectionProgress, "جاري إنشاء المجموعة " . ($index + 1) . " من $totalSections...");
 
-            $filename = $this->generateFilenameWithOCR($pdfPath, $pages, $index, $separatorBarcode);
+            $filename = $this->generateFilenameWithOCR($localPath, $pages, $index, $separatorBarcode);
             $filenameSafe = $filename . '.pdf';
 
             $directory = "groups";
-            $fullDir = storage_path("app/private/{$directory}");
+            $fullDir = storage_path("app/public/{$directory}"); // استخدام public بدل private
             if (!file_exists($fullDir)) {
                 mkdir($fullDir, 0775, true);
             }
@@ -122,7 +126,7 @@ class BarcodeOCRService
                 Log::debug("Deleted existing group from database", ['pdf_path' => $dbPath]);
             }
 
-            $pdfCreated = $this->createQuickPdf($pdfPath, $pages, $outputPath);
+            $pdfCreated = $this->createQuickPdf($localPath, $pages, $outputPath);
 
             if ($pdfCreated && filesize($outputPath) > 1000) {
                 Log::debug("PDF created/replaced successfully", [
@@ -164,7 +168,7 @@ class BarcodeOCRService
             'group_files' => array_map(fn($g) => $g->pdf_path, $createdGroups)
         ]);
 
-        //  تنظيف الـ Redis lock
+        // تنظيف الـ Redis lock
         Redis::del("processing_{$upload->id}");
 
         return $createdGroups;
@@ -179,7 +183,6 @@ class BarcodeOCRService
             try {
                 // تخزين في Redis
                 Redis::setex("upload_progress:{$this->uploadId}", 3600, $progress);
-
                 Redis::setex("upload_message:{$this->uploadId}", 3600, $message);
 
                 Log::debug("Progress updated", [
@@ -199,7 +202,6 @@ class BarcodeOCRService
     /**
      * إنشاء اسم ملف باستخدام OCR لاستخراج النص
      */
-
     private function generateFilenameWithOCR($pdfPath, $pages, $index, $barcode)
     {
         $firstPage = $pages[0];
@@ -336,7 +338,6 @@ class BarcodeOCRService
                 @unlink($textFile);
             }
 
-            // لا نحذف الصورة فوراً لأننا نستفيد منها في الكاش لاحقًا
             return $this->ocrCache[$cacheKey] = $content;
         } catch (Exception $e) {
             Log::warning("OCR extraction failed", ['page' => $page, 'error' => $e->getMessage()]);
@@ -402,7 +403,7 @@ class BarcodeOCRService
     }
 
     /**
-     * إنشاء PDF باستخدام pdftk (بديل أكثر موثوقية)
+     * إنشاء PDF باستخدام Ghostscript
      */
     private function createQuickPdf($pdfPath, $pages, $outputPath)
     {
@@ -414,9 +415,12 @@ class BarcodeOCRService
             }
 
             // بناء قائمة الصفحات لـ Ghostscript
-            $pageList = implode(' ', array_map(function($page) {
-                return "-dPageList=" . $page;
-            }, $pages));
+            $pageRanges = [];
+            foreach ($pages as $page) {
+                $pageRanges[] = "-dFirstPage={$page}";
+                $pageRanges[] = "-dLastPage={$page}";
+            }
+            $pageList = implode(' ', $pageRanges);
 
             $cmd = sprintf(
                 'gs -q -dNOPAUSE -dBATCH -sDEVICE=pdfwrite -dCompatibilityLevel=1.7 ' .
@@ -609,81 +613,50 @@ class BarcodeOCRService
         throw new Exception("Unable to determine page count");
     }
 
-   /**
-     * Process PDF from an existing local or S3 path
+    /**
+     * دالة مختصرة للمعالجة البسيطة (بدون OCR متقدم)
      */
-    public function processPdfFromLocalPath(Upload $upload)
+    public function simpleProcessPdf(Upload $upload)
     {
         try {
             $upload->update(['status' => 'processing']);
 
-            $path = $upload->stored_filename;
-            $isRemote = str_starts_with($path, 's3://') || str_starts_with($path, 'uploads/');
+            $filePath = $upload->stored_filename;
 
-            // تحميل الملف مؤقتاً إذا كان على S3 / MinIO
-            if ($isRemote) {
-                $localPath = storage_path('app/temp_' . basename($path));
-
-                // استخدام Laravel Storage
-                Storage::disk('s3')->getDriver()->getObject([
-                    'Bucket' => config('filesystems.disks.s3.bucket'),
-                    'Key' => str_replace('s3://', '', $path),
-                    'SaveAs' => $localPath,
-                ]);
-
-                $path = $localPath;
+            if (!Storage::disk('public')->exists($filePath)) {
+                throw new Exception("PDF file not found: " . $filePath);
             }
 
-            // -------- OCR + PAGE COUNT + GROUPING ----------
+            // الحصول على المسار الفعلي للملف
+            $localPath = Storage::disk('public')->path($filePath);
 
-            // 1) حساب عدد الصفحات
-            $pdfParser = new \Smalot\PdfParser\Parser();
-            $document = $pdfParser->parseFile($path);
-            $pages = $document->getDetails()['Pages'] ?? 0;
+            // حساب عدد الصفحات فقط
+            $pageCount = $this->getPdfPageCount($localPath);
 
             $upload->update([
-                'total_pages' => $pages,
+                'total_pages' => $pageCount,
+                'status' => 'completed'
             ]);
 
-            // 2) OCR SERVICE (إذا موجود)
-            if (app()->bound('ocr')) {
-                $ocr = app('ocr');
-                $ocr->process($path, $upload->id);
-            }
-
-            // 3) إنشاء مجموعات افتراضية
-            if ($pages > 0) {
-                $groupSize = 50;
-                $numGroups = ceil($pages / $groupSize);
-
-                for ($i = 1; $i <= $numGroups; $i++) {
-                    $upload->groups()->create([
-                        'group_number' => $i,
-                        'status' => 'pending'
-                    ]);
-                }
-            }
-
-            // تحديث الحالة النهائية
-            $upload->update(['status' => 'completed']);
-
-            // حذف الملف المؤقت إذا تم تحميله من S3
-            if ($isRemote && file_exists($path)) {
-                @unlink($path);
-            }
+            Log::info("Simple PDF processing completed", [
+                'upload_id' => $upload->id,
+                'page_count' => $pageCount
+            ]);
 
             return true;
 
         } catch (\Exception $e) {
+            Log::error("Simple PDF processing failed", [
+                'upload_id' => $upload->id,
+                'error' => $e->getMessage()
+            ]);
 
             $upload->update([
-                'status' => 'error',
-                'error_message' => $e->getMessage(),
+                'status' => 'failed',
+                'error_message' => $e->getMessage()
             ]);
 
             return false;
         }
     }
-
-
 }

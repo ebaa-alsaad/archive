@@ -20,24 +20,31 @@ Route::middleware(['auth'])->group(function () {
     // Upload Routes
     // ----------------------
     Route::prefix('uploads')->name('uploads.')->controller(UploadController::class)->group(function () {
-        Route::get('/', 'index')->name('index');
-        Route::get('/create', 'create')->name('create');
-        Route::post('/', 'store')->name('store');
-        Route::get('/{upload}', 'show')->name('show');
-        Route::patch('/{upload}', 'update')->name('update');
-        Route::delete('/{upload}', 'destroy')->name('destroy');
+    <?php
 
-        // Multipart upload routes
-        Route::post('/init', 'initMultipart')->name('init');
-        Route::post('/presign', 'presignPart')->name('presign');
-        Route::post('/complete', 'completeMultipart')->name('complete');
-        Route::post('/abort', 'abortMultipart')->name('abort');
+use App\Http\Controllers\UploadController;
+use Illuminate\Support\Facades\Route;
 
-        // Additional routes
-        Route::get('/file/{upload}', 'showFile')->name('file');
-        Route::get('/{upload}/status', 'checkStatus')->name('status');
-        Route::get('/{upload}/download-all', 'downloadAllGroupsZip')->name('download_all_groups');
-    });
+// Upload Routes
+Route::prefix('uploads')->name('uploads.')->controller(UploadController::class)->group(function () {
+    // الصفحات الأساسية
+    Route::get('/', 'index')->name('index');
+    Route::get('/create', 'create')->name('create');
+    Route::get('/{upload}', 'show')->name('show');
+    Route::patch('/{upload}', 'update')->name('update');
+    Route::delete('/{upload}', 'destroy')->name('destroy');
+
+    // نظام الرفع المحلي الجديد
+    Route::post('/init', 'initUpload')->name('init');
+    Route::post('/chunk', 'uploadChunk')->name('chunk');
+    Route::post('/abort', 'abortUpload')->name('abort');
+    Route::post('/direct', 'directUpload')->name('direct');
+
+    // الملفات والحالة
+    Route::get('/file/{upload}', 'showFile')->name('file');
+    Route::get('/{upload}/status', 'checkStatus')->name('status');
+    Route::get('/{upload}/download-all', 'downloadAllGroupsZip')->name('download_all_groups');
+});
 
      // ----------------------
     // Group Routes
