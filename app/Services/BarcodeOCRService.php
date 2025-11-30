@@ -3,7 +3,7 @@
 namespace App\Services;
 
 use Exception;
-use App\Models\Group;
+use App\Models\{Group,Upload};
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Facades\Storage;
@@ -608,4 +608,82 @@ class BarcodeOCRService
 
         throw new Exception("Unable to determine page count");
     }
+
+   /**
+     * Process PDF from an existing local or S3 path
+     */
+    public function processPdfFromLocalPath(Upload $upload)
+    {
+        try {
+            $upload->update(['status' => 'processing']);
+
+            $path = $upload->stored_filename;
+            $isRemote = str_starts_with($path, 's3://') || str_starts_with($path, 'uploads/');
+
+            // تحميل الملف مؤقتاً إذا كان على S3 / MinIO
+            if ($isRemote) {
+                $localPath = storage_path('app/temp_' . basename($path));
+
+                // استخدام Laravel Storage
+                Storage::disk('s3')->getDriver()->getObject([
+                    'Bucket' => config('filesystems.disks.s3.bucket'),
+                    'Key' => str_replace('s3://', '', $path),
+                    'SaveAs' => $localPath,
+                ]);
+
+                $path = $localPath;
+            }
+
+            // -------- OCR + PAGE COUNT + GROUPING ----------
+
+            // 1) حساب عدد الصفحات
+            $pdfParser = new \Smalot\PdfParser\Parser();
+            $document = $pdfParser->parseFile($path);
+            $pages = $document->getDetails()['Pages'] ?? 0;
+
+            $upload->update([
+                'total_pages' => $pages,
+            ]);
+
+            // 2) OCR SERVICE (إذا موجود)
+            if (app()->bound('ocr')) {
+                $ocr = app('ocr');
+                $ocr->process($path, $upload->id);
+            }
+
+            // 3) إنشاء مجموعات افتراضية
+            if ($pages > 0) {
+                $groupSize = 50;
+                $numGroups = ceil($pages / $groupSize);
+
+                for ($i = 1; $i <= $numGroups; $i++) {
+                    $upload->groups()->create([
+                        'group_number' => $i,
+                        'status' => 'pending'
+                    ]);
+                }
+            }
+
+            // تحديث الحالة النهائية
+            $upload->update(['status' => 'completed']);
+
+            // حذف الملف المؤقت إذا تم تحميله من S3
+            if ($isRemote && file_exists($path)) {
+                @unlink($path);
+            }
+
+            return true;
+
+        } catch (\Exception $e) {
+
+            $upload->update([
+                'status' => 'error',
+                'error_message' => $e->getMessage(),
+            ]);
+
+            return false;
+        }
+    }
+
+
 }

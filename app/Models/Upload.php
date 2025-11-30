@@ -9,7 +9,15 @@ class Upload extends Model
 {
     use HasFactory;
 
-    protected $fillable = ['original_filename', 'stored_filename', 'status','user_id','total_pages'];
+    protected $fillable = [
+        'user_id',
+        'original_filename',
+        'stored_filename',
+        's3_etag',
+        'status',
+        'error_message',
+        'total_pages'
+    ];
 
      public function groups()
     {

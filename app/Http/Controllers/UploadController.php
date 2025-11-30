@@ -2,276 +2,256 @@
 
 namespace App\Http\Controllers;
 
-use ZipArchive;
-use Illuminate\Support\Str;
+use Aws\S3\S3Client;
 use Illuminate\Http\Request;
-use App\Models\{Upload, Group};
-use App\Services\BarcodeOCRService;
-use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\File;
-use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
+use App\Models\Upload;
+use App\Models\Group;
+use App\Jobs\ProcessPdfJob;
+use Illuminate\Support\Facades\Log;
+use ZipArchive;
 
 class UploadController extends Controller
 {
-    protected $barcodeService;
+    protected S3Client $s3;
+    protected string $bucket;
+    protected string $region;
 
-    public function __construct(BarcodeOCRService $barcodeService)
+    public function __construct()
     {
-        $this->barcodeService = $barcodeService;
+        $this->bucket = env('AWS_BUCKET');
+        $this->region = env('AWS_DEFAULT_REGION') ?: 'us-east-1';
+
+        $this->s3 = new S3Client([
+            'version' => 'latest',
+            'region' => $this->region,
+            'endpoint' => env('AWS_URL'), // مهم لـ MinIO
+            'use_path_style_endpoint' => true, // ضروري لـ MinIO
+            'credentials' => [
+                'key' => env('AWS_ACCESS_KEY_ID'),
+                'secret' => env('AWS_SECRET_ACCESS_KEY'),
+            ],
+            'http' => ['verify' => false],
+        ]);
     }
+
+    public function create() { return view('uploads.create'); }
 
     public function index()
     {
-        $uploads = Upload::with(['user', 'groups'])
-            ->orderBy('created_at', 'desc')
-            ->paginate(10);
-
+        $uploads = Upload::withCount('groups')->orderBy('created_at', 'desc')->paginate(20);
         return view('uploads.index', compact('uploads'));
-    }
-
-    public function create()
-    {
-        return view('uploads.create');
-    }
-
-    public function show(Upload $upload)
-    {
-        $upload->load(['groups', 'user']);
-        return view('uploads.show', compact('upload'));
-    }
-
-    public function showFile(Upload $upload)
-    {
-        $path = $upload->stored_filename;
-        $disk = 'private';
-
-        if (empty($path) || !Storage::disk($disk)->exists($path)) {
-            abort(404, 'الملف غير موجود أو مساره مفقود في قاعدة البيانات.');
-        }
-
-        return Storage::disk($disk)->response($path);
-    }
-
-    public function downloadAllGroupsZip(Upload $upload)
-    {
-        if ($upload->status !== 'completed' || $upload->groups->isEmpty()) {
-            return redirect()->back()->with('error', 'لا يمكن تحميل ملف ZIP. الملف غير مكتمل المعالجة أو لا يحتوي على مجموعات.');
-        }
-
-        $zip = new ZipArchive;
-        $zipFileName = 'groups_for_' . $upload->original_filename . '.zip';
-
-        // المسار المؤقت لملف ZIP
-        $tempPath = storage_path('app/temp/' . $zipFileName);
-
-        // إنشاء دليل مؤقت إذا لم يكن موجوداً
-        if (!File::isDirectory(storage_path('app/temp'))) {
-            File::makeDirectory(storage_path('app/temp'), 0755, true);
-        }
-
-        if ($zip->open($tempPath, ZipArchive::CREATE | ZipArchive::OVERWRITE) === TRUE) {
-
-            $errors = [];
-
-            // إضافة كل ملف PDF ناتج إلى ملف ZIP
-            foreach ($upload->groups as $group) {
-                if ($group->pdf_path && Storage::exists($group->pdf_path)) {
-                    // يجب قراءة محتوى الملفات من الـ Storage
-                    $fileContents = Storage::get($group->pdf_path);
-
-                    $zip->addFromString(basename($group->pdf_path), $fileContents);
-                } else {
-                    $errors[] = $group->code;
-                }
-            }
-
-            $zip->close();
-
-            if (!empty($errors)) {
-                Log::warning('Some group files were missing during ZIP creation.', ['upload_id' => $upload->id, 'missing_groups' => $errors]);
-            }
-
-            if (File::exists($tempPath)) {
-                $response = response()->download($tempPath, $zipFileName)->deleteFileAfterSend(true);
-                return $response;
-            }
-        }
-
-        return redirect()->back()->with('error', 'حدث خطأ أثناء إنشاء ملف ZIP.');
     }
 
     public function store(Request $request)
     {
-        ini_set('upload_max_filesize', '250M');
-        ini_set('post_max_size', '250M');
-        ini_set('max_execution_time', 1200);
-        ini_set('max_input_time', 1200);
-        ini_set('memory_limit', '1024M');
-
-        Log::info('Upload request received', [
-            'has_file' => $request->hasFile('pdf_file'),
-            'file_size' => $request->file('pdf_file')?->getSize(),
+        $request->validate([
+            'original_filename' => 'required|string',
+            'stored_filename' => 'required|string',
         ]);
 
-        try {
-            $request->validate([
-                'pdf_file' => 'required|mimes:pdf|max:256000'
-            ]);
+        $upload = Upload::create([
+            'user_id' => auth()->id(),
+            'original_filename' => $request->original_filename,
+            'stored_filename' => $request->stored_filename,
+            'status' => 'queued'
+        ]);
 
-            $file = $request->file('pdf_file');
-            $fileSizeMB = round($file->getSize() / 1024 / 1024, 2);
+        ProcessPdfJob::dispatch($upload->id);
 
-            $storedName = $file->store('uploads', 'private');
-            $fullPath = Storage::disk('private')->path($storedName);
-
-            $upload = Upload::create([
-                'original_filename' => $file->getClientOriginalName(),
-                'stored_filename' => $storedName,
-                'total_pages' => 0,
-                'status' => 'processing',
-                'user_id' => auth()->id(),
-            ]);
-
-            // إرجاع الرد فوراً
-            return response()->json([
-                'success' => true,
-                'message' => "تم رفع الملف بنجاح ({$fileSizeMB} MB). جاري المعالجة...",
-                'upload_id' => $upload->id,
-                'status' => 'processing'
-            ]);
-
-        } catch (\Exception $e) {
-            Log::error('Upload failed', [
-                'error_message' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'error' => 'فشل في رفع الملف: ' . $e->getMessage()
-            ], 500);
-        }
+        return redirect()->route('uploads.index')->with('success', 'Upload created and queued.');
     }
 
-    public function process($uploadId)
+    public function show(Upload $upload)
     {
-        try {
-            $upload = Upload::findOrFail($uploadId);
-
-            if ($upload->status !== 'processing') {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'الملف ليس في حالة معالجة. الحالة الحالية: ' . $upload->status
-                ]);
-            }
-
-            $fullPath = Storage::disk('private')->path($upload->stored_filename);
-
-            // الحصول على عدد الصفحات
-            $pageCount = $this->barcodeService->getPdfPageCount($fullPath);
-            $upload->update(['total_pages' => $pageCount]);
-
-            // معالجة PDF
-            $groups = $this->barcodeService->processPdf($upload, 'private');
-
-
-            $upload->update([
-                'status' => 'completed',
-                'error_message' => null
-            ]);
-
-            $barcodes = [];
-            foreach ($groups as $group) {
-                if ($group instanceof Group && !empty($group->code)) {
-                    $barcodes[] = $group->code;
-                }
-            }
-
-            Log::info('Processing completed successfully', [
-                'upload_id' => $upload->id,
-                'groups_count' => count($groups)
-            ]);
-
-            return response()->json([
-                'success' => true,
-                'message' => "تمت معالجة الملف بنجاح. تم إنشاء " . count($groups) . " قسم.",
-                'groups_count' => count($groups),
-                'total_pages' => $pageCount,
-                'barcodes' => $barcodes,
-                'group_files' => array_map(fn($g) => $g->pdf_path, $groups)
-            ]);
-
-        } catch (\Exception $e) {
-            Log::error('Processing failed', [
-                'upload_id' => $uploadId,
-                'error_message' => $e->getMessage()
-            ]);
-
-            if (isset($upload)) {
-                $upload->update([
-                    'status' => 'failed',
-                    'error_message' => $e->getMessage()
-                ]);
-            }
-
-            return response()->json([
-                'success' => false,
-                'error' => 'فشل في المعالجة: ' . $e->getMessage()
-            ], 500);
-        }
+        $upload->load('groups');
+        return view('uploads.show', compact('upload'));
     }
 
-    public function checkStatus($uploadId)
+    public function update(Request $request, Upload $upload)
     {
-        $upload = Upload::find($uploadId);
+        $request->validate([
+            'original_filename' => 'required|string',
+            'status' => 'required|string',
+        ]);
 
-        if (!$upload) {
-            return response()->json([
-                'success' => false,
-                'error' => 'الرفع غير موجود'
-            ]);
+        $upload->update($request->only('original_filename', 'status'));
+        return redirect()->route('uploads.show', $upload)->with('success', 'Upload updated.');
+    }
+
+    public function destroy(Upload $upload)
+    {
+        $upload->delete();
+        return redirect()->route('uploads.index')->with('success', 'Upload deleted.');
+    }
+
+    // ----------------------
+    // S3 / MinIO Multipart Upload
+    // ----------------------
+    public function initMultipart(Request $request)
+    {
+        $request->validate([
+            'filename' => 'required|string',
+            'content_type' => 'required|string',
+        ]);
+
+        $userId = auth()->id() ?? 'anonymous';
+        $key = "users/{$userId}/uploads/" . Str::uuid() . '-' . basename($request->filename);
+
+        $result = $this->s3->createMultipartUpload([
+            'Bucket' => $this->bucket,
+            'Key' => $key,
+            'ACL' => 'private',
+            'ContentType' => $request->content_type,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'uploadId' => $result['UploadId'],
+            'key' => $key,
+        ]);
+    }
+
+    public function presignPart(Request $request)
+    {
+        $request->validate([
+            'key' => 'required|string',
+            'uploadId' => 'required|string',
+            'partNumber' => 'required|integer|min:1',
+        ]);
+
+        $command = $this->s3->getCommand('UploadPart', [
+            'Bucket' => $this->bucket,
+            'Key' => $request->key,
+            'UploadId' => $request->uploadId,
+            'PartNumber' => $request->partNumber,
+        ]);
+
+        $presignedRequest = $this->s3->createPresignedRequest($command, '+30 minutes');
+
+        return response()->json(['url' => (string) $presignedRequest->getUri()]);
+    }
+
+    public function completeMultipart(Request $request)
+    {
+        $request->validate([
+            'key' => 'required|string',
+            'uploadId' => 'required|string',
+            'parts' => 'required|array|min:1',
+            'original_filename' => 'nullable|string',
+        ]);
+
+        $parts = $request->parts;
+        usort($parts, fn($a, $b) => intval($a['PartNumber']) <=> intval($b['PartNumber']));
+
+        $params = [
+            'Bucket' => $this->bucket,
+            'Key' => $request->key,
+            'UploadId' => $request->uploadId,
+            'MultipartUpload' => [
+                'Parts' => array_map(fn($p) => [
+                    'ETag' => trim($p['ETag'], "\"'"),
+                    'PartNumber' => intval($p['PartNumber']),
+                ], $parts)
+            ]
+        ];
+
+        try {
+            $result = $this->s3->completeMultipartUpload($params);
+        } catch (\Exception $e) {
+            Log::error('completeMultipartUpload failed', ['error' => $e->getMessage()]);
+            return response()->json(['success' => false, 'error' => $e->getMessage()], 500);
         }
+
+        $upload = Upload::create([
+            'user_id' => auth()->id(),
+            'original_filename' => $request->original_filename ?? basename($request->key),
+            'stored_filename' => $request->key,
+            's3_etag' => $result['ETag'] ?? null,
+            'status' => 'queued'
+        ]);
+
+        ProcessPdfJob::dispatch($upload->id);
+
+        return response()->json(['success' => true, 'upload_id' => $upload->id, 's3_result' => $result]);
+    }
+
+    public function abortMultipart(Request $request)
+    {
+        $request->validate(['key' => 'required|string','uploadId' => 'required|string']);
+
+        try {
+            $this->s3->abortMultipartUpload([
+                'Bucket' => $this->bucket,
+                'Key' => $request->key,
+                'UploadId' => $request->uploadId,
+            ]);
+        } catch (\Exception $e) {
+            Log::warning('Failed aborting multipart', ['err' => $e->getMessage()]);
+        }
+
+        return response()->json(['success' => true]);
+    }
+
+    public function checkStatus($id)
+    {
+        $upload = Upload::find($id);
+        if (!$upload) return response()->json(['success' => false, 'error' => 'Upload not found'], 404);
 
         return response()->json([
             'success' => true,
             'status' => $upload->status,
-            'message' => $this->getStatusMessage($upload->status),
+            'message' => $upload->error_message,
             'groups_count' => $upload->groups()->count(),
             'total_pages' => $upload->total_pages
         ]);
     }
 
-    private function getStatusMessage($status)
+    public function showFile($uploadId)
     {
-        $messages = [
-            'processing' => 'جاري معالجة الملف...',
-            'completed' => 'تمت المعالجة بنجاح',
-            'failed' => 'فشلت المعالجة',
-            'queued' => 'في قائمة الانتظار'
-        ];
+        $upload = Upload::find($uploadId);
+        if (!$upload) abort(404);
 
-        return $messages[$status] ?? 'حالة غير معروفة';
+        $cmd = $this->s3->getCommand('GetObject', [
+            'Bucket' => $this->bucket,
+            'Key' => $upload->stored_filename,
+        ]);
+
+        $presigned = $this->s3->createPresignedRequest($cmd, '+10 minutes');
+
+        return redirect((string)$presigned->getUri());
     }
 
-   public function destroy(Upload $upload)
+    public function downloadAllGroupsZip(Upload $upload)
     {
-        if ($upload->stored_filename) {
-            Storage::disk('private')->delete($upload->stored_filename);
+        $zipFileName = 'upload_' . $upload->id . '_groups.zip';
+        $zipPath = storage_path('app/temp/' . $zipFileName);
+
+        if (!file_exists(dirname($zipPath))) mkdir(dirname($zipPath), 0755, true);
+
+        $zip = new ZipArchive();
+        $zip->open($zipPath, ZipArchive::CREATE | ZipArchive::OVERWRITE);
+
+        foreach ($upload->groups as $group) {
+            $cmd = $this->s3->getCommand('GetObject', [
+                'Bucket' => $this->bucket,
+                'Key' => $group->pdf_path,
+            ]);
+            $presigned = $this->s3->createPresignedRequest($cmd, '+5 minutes');
+            $content = file_get_contents((string)$presigned->getUri());
+            $zip->addFromString(basename($group->pdf_path), $content);
         }
 
-        $upload->groups()->each(function($group) {
-            if ($group->pdf_path && Storage::exists($group->pdf_path)) {
-                Storage::delete($group->pdf_path);
-            }
-            $group->delete();
-        });
-
-        $upload->delete();
-
-        return response()->json([
-            'success' => true
-        ]);
+        $zip->close();
+        return response()->download($zipPath)->deleteFileAfterSend(true);
     }
 
+    public function processPdfFromLocalPath(string $localPath, Upload $upload)
+    {
+        // مثال: عد الصفحات وحفظ العدد
+        $totalPages = 0;
+        $upload->update(['status' => 'processed','total_pages' => $totalPages,'error_message' => null]);
+        return true;
+    }
 }

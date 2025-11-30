@@ -29,12 +29,24 @@ Route::middleware(['auth'])->group(function () {
         Route::delete('/{upload}', 'destroy')->name('destroy');
 
         // Custom routes
-        Route::get('/{upload}/status', 'checkStatus')->name('status');
+
         Route::get('/uploaded-file/{upload}', 'showFile')->name('show_file');
         Route::get('/{upload}/download-all',  'downloadAllGroupsZip')->name('download_all_groups');
-        Route::post('/{upload}/process','process')->name('process');
         Route::post('/chunk', 'uploadChunk')->name('chunk');
         Route::post('/init', 'initUpload')->name('init');
+
+        Route::post('/process','process')->name('process');
+        Route::post('/presign', 'generatePresignedUrl')->name('presign');
+
+        // multipart s3 endpoints
+        Route::post('/s3/init', 'initMultipart')->name('s3.init');
+        Route::post('/s3/part',  'presignPart')->name('s3.part');
+        Route::post('/s3/complete', 'completeMultipart')->name('s3.complete');
+        Route::post('/s3/abort',  'abortMultipart')->name('s3.abort');
+
+        // status & file
+        Route::get('/{upload}/status',  'checkStatus')->name('status');
+        Route::get('/file/{id}', 'showFile')->name('file');
 
 
     });
