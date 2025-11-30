@@ -21,11 +21,9 @@ Route::middleware(['auth'])->group(function () {
     // ----------------------
 
     Route::prefix('uploads')->name('uploads.')->controller(UploadController::class)->group(function () {
-        // الطريقة فائقة السرعة
         Route::post('/', 'store')->name('store');
         Route::post('/download-results', 'downloadResults')->name('download.results');
 
-        // الطرق الأخرى
         Route::get('/', 'index')->name('index');
         Route::get('/create', 'create')->name('create');
         Route::get('/{upload}', 'show')->name('show');
@@ -37,6 +35,8 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/uploaded-file/{upload}', 'showFile')->name('show_file');
         Route::get('/{upload}/download-all', 'downloadAllGroupsZip')->name('download_all_groups');
         Route::post('/download/multi', 'downloadMultiZip')->name('download.multi');
+
+        Route::get('/system/status', 'getSystemStatus')->name('system.status');
     });
      // ----------------------
     // Group Routes
