@@ -433,7 +433,34 @@ class UploadController extends Controller
         return redirect()->back()->with('error', 'حدث خطأ أثناء إنشاء ملف ZIP أو لا توجد ملفات للتحميل.');
     }
 
-    // ... باقي الدوال تبقى كما هي (checkStatus, getStatusMessage, destroy, etc.)
+    /**
+     * الحصول على حالة النظام - الدالة الجديدة
+     */
+    public function getSystemStatus()
+    {
+        try {
+            $tmpfsStatus = $this->fastProcessingService->getTmpfsStatus();
+
+            return response()->json([
+                'success' => true,
+                'system' => [
+                    'tmpfs_status' => $tmpfsStatus,
+                    'memory_usage' => round(memory_get_usage(true) / 1024 / 1024, 2),
+                    'peak_memory' => round(memory_get_peak_usage(true) / 1024 / 1024, 2),
+                    'load_average' => sys_getloadavg(),
+                    'disk_free_space' => round(disk_free_space('/') / 1024 / 1024, 2),
+                    'timestamp' => now()->toDateTimeString()
+                ]
+            ]);
+        } catch (\Exception $e) {
+            Log::error('System status check failed', ['error' => $e->getMessage()]);
+
+            return response()->json([
+                'success' => false,
+                'error' => 'فشل في فحص حالة النظام'
+            ], 500);
+        }
+    }
 
     public function checkStatus($uploadId)
     {
@@ -571,22 +598,5 @@ class UploadController extends Controller
         }
 
         return redirect()->back()->with('error', 'حدث خطأ أثناء إنشاء ملف ZIP.');
-    }
-
-    /**
-     * دالة جديدة: الحصول على حالة النظام
-     */
-    public function getSystemStatus()
-    {
-        return response()->json([
-            'success' => true,
-            'system' => [
-                'tmpfs_status' => $this->fastProcessingService->getTmpfsStatus(),
-                'memory_usage' => round(memory_get_usage(true) / 1024 / 1024, 2),
-                'peak_memory' => round(memory_get_peak_usage(true) / 1024 / 1024, 2),
-                'load_average' => sys_getloadavg(),
-                'disk_free_space' => round(disk_free_space('/') / 1024 / 1024, 2)
-            ]
-        ]);
     }
 }
