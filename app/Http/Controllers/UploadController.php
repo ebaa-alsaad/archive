@@ -12,14 +12,17 @@ use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
+use App\Services\UltraFastProcessingService;
 
 class UploadController extends Controller
 {
     protected $barcodeService;
+    protected $fastProcessingService;
 
-    public function __construct(BarcodeOCRService $barcodeService)
+    public function __construct(BarcodeOCRService $barcodeService, UltraFastProcessingService $fastProcessingService)
     {
         $this->barcodeService = $barcodeService;
+        $this->fastProcessingService = $fastProcessingService;
     }
 
     public function index()
@@ -43,64 +46,73 @@ class UploadController extends Controller
     }
 
     /**
-     * رفع ومعالجة فورية فائقة السرعة - الحل الجذري
+     * رفع ومعالجة فائقة السرعة - النسخة المحسنة
      */
     public function store(Request $request)
     {
-        // ⚡ زيادة الحدود القصوى
-        ini_set('upload_max_filesize', '500M');
-        ini_set('post_max_size', '500M');
-        ini_set('max_execution_time', 300);
-        ini_set('max_input_time', 300);
-        ini_set('memory_limit', '4096M');
+        // ⚡ إعدادات واقعية بناءً على مساحة tmpfs
+        ini_set('upload_max_filesize', '100M');
+        ini_set('post_max_size', '100M');
+        ini_set('max_execution_time', 180);
+        ini_set('max_input_time', 180);
+        ini_set('memory_limit', '512M');
+        ini_set('max_file_uploads', 10);
 
-        Log::info('⚡ ULTRA FAST Processing Started');
+        // استخدام tmpfs للملفات المؤقتة
+        ini_set('upload_tmp_dir', '/tmp/ultrafast_processing');
+
+        Log::info('🚀 ULTRA FAST Processing Started - Enhanced Version');
 
         try {
             $request->validate([
                 'pdf_files' => 'required|array',
-                'pdf_files.*' => 'required|mimes:pdf|max:512000'
+                'pdf_files.*' => 'required|mimes:pdf|max:102400' // 100MB واقعي
             ]);
 
             $files = $request->file('pdf_files');
-            $results = [];
+            $totalFiles = count($files);
             $totalSizeMB = 0;
+
+            // فحص مساحة tmpfs المتاحة
+            $tmpfsStatus = $this->fastProcessingService->getTmpfsStatus();
+            Log::info("Tmpfs Status Before Processing", $tmpfsStatus);
+
+            if ($tmpfsStatus['free_mb'] < 50) { // أقل من 50MB متاحة
+                throw new \Exception('مساحة التخزين المؤقت غير كافية. يرجى المحاولة لاحقاً.');
+            }
 
             DB::beginTransaction();
 
-            foreach ($files as $file) {
-                $fileSizeMB = round($file->getSize() / 1024 / 1024, 2);
-                $totalSizeMB += $fileSizeMB;
-
-                Log::info("Processing file directly", [
-                    'filename' => $file->getClientOriginalName(),
-                    'size_mb' => $fileSizeMB
-                ]);
-
-                // ⚡ معالجة مباشرة فائقة السرعة
-                $result = $this->processFileUltraFast($file);
-                $results[] = $result;
-            }
+            // ⚡ معالجة بالدفعات لتحسين الأداء
+            $results = $this->fastProcessingService->processBatch(
+                $files,
+                2, // معالجة ملفين في كل دفعة
+                function($file) use (&$totalSizeMB) {
+                    return $this->processFileUltraFastEnhanced($file, $totalSizeMB);
+                }
+            );
 
             DB::commit();
 
-            Log::info("⚡ ALL FILES PROCESSED SUCCESSFULLY", [
-                'file_count' => count($files),
-                'total_size_mb' => $totalSizeMB
+            Log::info("🎉 ALL FILES PROCESSED SUCCESSFULLY - Enhanced", [
+                'file_count' => $totalFiles,
+                'total_size_mb' => $totalSizeMB,
+                'tmpfs_status_after' => $this->fastProcessingService->getTmpfsStatus()
             ]);
 
             return response()->json([
                 'success' => true,
-                'message' => "⚡ تم معالجة " . count($files) . " ملف بنجاح في وقت قياسي! ({$totalSizeMB} MB)",
+                'message' => "⚡ تم معالجة {$totalFiles} ملف بنجاح في وقت قياسي! ({$totalSizeMB} MB)",
                 'results' => $results,
-                'file_count' => count($files),
-                'total_size_mb' => $totalSizeMB
+                'file_count' => $totalFiles,
+                'total_size_mb' => $totalSizeMB,
+                'processing_time' => round(microtime(true) - LARAVEL_START, 2)
             ]);
 
         } catch (\Exception $e) {
             DB::rollBack();
 
-            Log::error('❌ ULTRA FAST Processing Failed', [
+            Log::error('❌ ULTRA FAST Processing Failed - Enhanced', [
                 'error_message' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
@@ -113,34 +125,43 @@ class UploadController extends Controller
     }
 
     /**
-     * معالجة فائقة السرعة - بدون تخزين مؤقت
+     * معالجة محسنة فائقة السرعة باستخدام tmpfs
      */
-    private function processFileUltraFast($file)
+    private function processFileUltraFastEnhanced($file, &$totalSizeMB)
     {
-        $tempPath = null;
+        $tmpfsInfo = null;
         $upload = null;
 
         try {
-            // ⚡ حفظ مؤقت سريع جداً
-            $tempPath = $file->store('temp_ultrafast', 'private');
-            $fullPath = Storage::disk('private')->path($tempPath);
+            $fileSizeMB = round($file->getSize() / 1024 / 1024, 2);
+            $totalSizeMB += $fileSizeMB;
+
+            Log::info("🚀 Processing file with TMPFS", [
+                'filename' => $file->getClientOriginalName(),
+                'size_mb' => $fileSizeMB
+            ]);
+
+            // ⚡ استخدام tmpfs بدلاً من نظام التخزين العادي
+            $tmpfsInfo = $this->fastProcessingService->storeInTmpfs($file);
+            $fullPath = $tmpfsInfo['path'];
 
             // إنشاء سجل سريع في قاعدة البيانات
             $upload = Upload::create([
                 'original_filename' => $file->getClientOriginalName(),
-                'stored_filename' => $tempPath,
+                'stored_filename' => $tmpfsInfo['path'], // تخزين مسار tmpfs
                 'file_size' => $file->getSize(),
                 'total_pages' => 0,
                 'status' => 'processing',
                 'user_id' => auth()->id(),
             ]);
 
-            Log::info("Starting ultra fast processing", [
+            Log::info("Starting enhanced ultra fast processing", [
                 'upload_id' => $upload->id,
-                'filename' => $file->getClientOriginalName()
+                'filename' => $file->getClientOriginalName(),
+                'tmpfs_path' => $tmpfsInfo['path']
             ]);
 
-            // ⚡ معالجة مباشرة فائقة السرعة
+            // ⚡ معالجة مباشرة من tmpfs
             $processingResult = $this->barcodeService->processPdfUltraFast($upload, $fullPath);
 
             // تحديث حالة الرفع
@@ -150,28 +171,23 @@ class UploadController extends Controller
                 'processed_at' => now()
             ]);
 
-            // ⚡ تنظيف فوري - حذف الملف المؤقت
-            if ($tempPath && Storage::disk('private')->exists($tempPath)) {
-                Storage::disk('private')->delete($tempPath);
-                Log::debug("Temporary file cleaned", ['temp_path' => $tempPath]);
-            }
-
             $result = [
                 'filename' => $file->getClientOriginalName(),
                 'upload_id' => $upload->id,
                 'groups_count' => count($processingResult['groups'] ?? []),
                 'total_pages' => $processingResult['total_pages'] ?? 0,
-                'groups' => $processingResult['groups'] ?? []
+                'groups' => $processingResult['groups'] ?? [],
+                'file_size_mb' => $fileSizeMB
             ];
 
-            Log::info("File processed successfully", $result);
+            Log::info("File processed successfully with TMPFS", $result);
 
             return $result;
 
         } catch (\Exception $e) {
             // تنظيف في حالة الخطأ
-            if ($tempPath && Storage::disk('private')->exists($tempPath)) {
-                Storage::disk('private')->delete($tempPath);
+            if ($tmpfsInfo && file_exists($tmpfsInfo['path'])) {
+                $this->fastProcessingService->cleanupTmpfs($tmpfsInfo['path']);
             }
 
             if ($upload) {
@@ -181,18 +197,24 @@ class UploadController extends Controller
                 ]);
             }
 
-            Log::error('Ultra fast processing failed', [
+            Log::error('Enhanced ultra fast processing failed', [
                 'filename' => $file->getClientOriginalName(),
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
 
             throw $e;
+        } finally {
+            // ⚡ تنظيف مؤكد للملف المؤقت من tmpfs
+            if ($tmpfsInfo && file_exists($tmpfsInfo['path'])) {
+                $this->fastProcessingService->cleanupTmpfs($tmpfsInfo['path']);
+                Log::debug("TMPFS file cleaned", ['tmpfs_path' => $tmpfsInfo['path']]);
+            }
         }
     }
 
     /**
-     * تحميل النتائج فائقة السرعة
+     * تحميل النتائج فائقة السرعة - النسخة المحسنة
      */
     public function downloadResults(Request $request)
     {
@@ -201,6 +223,15 @@ class UploadController extends Controller
 
             if (empty($uploadIds)) {
                 return response()->json(['error' => 'لم يتم توفير معرّفات الملفات'], 400);
+            }
+
+            // استخدام Redis لل cache إذا متوفر
+            $cacheKey = 'download_results_' . md5(implode(',', $uploadIds));
+            $cachedResult = Redis::get($cacheKey);
+
+            if ($cachedResult) {
+                Log::info("Serving download from cache", ['cache_key' => $cacheKey]);
+                return response()->json(json_decode($cachedResult, true));
             }
 
             $uploads = Upload::with('groups')->whereIn('id', $uploadIds)->get();
@@ -246,6 +277,12 @@ class UploadController extends Controller
                 ]);
 
                 if (File::exists($tempPath) && $addedFiles > 0) {
+                    // cache النتيجة لمدة 5 دقائق
+                    Redis::setex($cacheKey, 300, json_encode([
+                        'success' => true,
+                        'download_url' => url('download/temp/' . $zipFileName)
+                    ]));
+
                     return response()->download($tempPath, $zipFileName)->deleteFileAfterSend(true);
                 }
             }
@@ -259,7 +296,7 @@ class UploadController extends Controller
     }
 
     /**
-     * التحقق من حالة الملفات
+     * التحقق من حالة الملفات - النسخة المحسنة
      */
     public function checkMultiStatus(Request $request)
     {
@@ -272,6 +309,14 @@ class UploadController extends Controller
             ]);
         }
 
+        // استخدام Redis لل cache
+        $cacheKey = 'multi_status_' . md5(implode(',', $uploadIds));
+        $cachedResult = Redis::get($cacheKey);
+
+        if ($cachedResult) {
+            return response()->json(json_decode($cachedResult, true));
+        }
+
         $uploads = Upload::withCount('groups')->whereIn('id', $uploadIds)->get();
 
         $statuses = [];
@@ -280,8 +325,12 @@ class UploadController extends Controller
         $totalGroups = 0;
         $totalPages = 0;
         $completedCount = 0;
+        $totalSizeMB = 0;
 
         foreach ($uploads as $upload) {
+            $fileSizeMB = round($upload->file_size / 1024 / 1024, 2);
+            $totalSizeMB += $fileSizeMB;
+
             $statuses[] = [
                 'id' => $upload->id,
                 'filename' => $upload->original_filename,
@@ -290,6 +339,7 @@ class UploadController extends Controller
                 'groups_count' => $upload->groups_count,
                 'total_pages' => $upload->total_pages,
                 'file_size' => $upload->file_size,
+                'file_size_mb' => $fileSizeMB,
                 'created_at' => $upload->created_at->format('Y-m-d H:i:s')
             ];
 
@@ -307,21 +357,28 @@ class UploadController extends Controller
             $totalPages += $upload->total_pages;
         }
 
-        return response()->json([
+        $result = [
             'success' => true,
             'statuses' => $statuses,
             'all_completed' => $allCompleted,
             'any_failed' => $anyFailed,
             'total_groups' => $totalGroups,
             'total_pages' => $totalPages,
+            'total_size_mb' => round($totalSizeMB, 2),
             'processed_files' => $completedCount,
             'total_files' => count($uploadIds),
-            'progress_percentage' => count($uploadIds) > 0 ? round(($completedCount / count($uploadIds)) * 100) : 0
-        ]);
+            'progress_percentage' => count($uploadIds) > 0 ? round(($completedCount / count($uploadIds)) * 100) : 0,
+            'tmpfs_status' => $this->fastProcessingService->getTmpfsStatus()
+        ];
+
+        // cache النتيجة لمدة 10 ثوانٍ
+        Redis::setex($cacheKey, 10, json_encode($result));
+
+        return response()->json($result);
     }
 
     /**
-     * تحميل ZIP لجميع الملفات
+     * تحميل ZIP لجميع الملفات - النسخة المحسنة
      */
     public function downloadMultiZip(Request $request)
     {
@@ -335,11 +392,9 @@ class UploadController extends Controller
 
         $zip = new ZipArchive;
         $zipFileName = 'multiple_uploads_' . time() . '.zip';
-        $tempPath = storage_path('app/temp/' . $zipFileName);
 
-        if (!File::isDirectory(storage_path('app/temp'))) {
-            File::makeDirectory(storage_path('app/temp'), 0755, true);
-        }
+        // استخدام tmpfs للملفات المؤقتة الكبيرة
+        $tempPath = '/tmp/ultrafast_processing/' . $zipFileName;
 
         if ($zip->open($tempPath, ZipArchive::CREATE | ZipArchive::OVERWRITE) === TRUE) {
             $errors = [];
@@ -378,8 +433,17 @@ class UploadController extends Controller
         return redirect()->back()->with('error', 'حدث خطأ أثناء إنشاء ملف ZIP أو لا توجد ملفات للتحميل.');
     }
 
+    // ... باقي الدوال تبقى كما هي (checkStatus, getStatusMessage, destroy, etc.)
+
     public function checkStatus($uploadId)
     {
+        $cacheKey = 'upload_status_' . $uploadId;
+        $cachedResult = Redis::get($cacheKey);
+
+        if ($cachedResult) {
+            return response()->json(json_decode($cachedResult, true));
+        }
+
         $upload = Upload::withCount('groups')->find($uploadId);
 
         if (!$upload) {
@@ -389,14 +453,19 @@ class UploadController extends Controller
             ]);
         }
 
-        return response()->json([
+        $result = [
             'success' => true,
             'status' => $upload->status,
             'message' => $this->getStatusMessage($upload->status),
             'groups_count' => $upload->groups_count,
             'total_pages' => $upload->total_pages,
-            'filename' => $upload->original_filename
-        ]);
+            'filename' => $upload->original_filename,
+            'file_size_mb' => round($upload->file_size / 1024 / 1024, 2)
+        ];
+
+        Redis::setex($cacheKey, 5, json_encode($result));
+
+        return response()->json($result);
     }
 
     private function getStatusMessage($status)
@@ -416,8 +485,8 @@ class UploadController extends Controller
     {
         try {
             // حذف الملف الأصلي إذا موجود
-            if ($upload->stored_filename && Storage::disk('private')->exists($upload->stored_filename)) {
-                Storage::disk('private')->delete($upload->stored_filename);
+            if ($upload->stored_filename && file_exists($upload->stored_filename)) {
+                unlink($upload->stored_filename);
             }
 
             // حذف ملفات المجموعات
@@ -452,8 +521,14 @@ class UploadController extends Controller
     public function showFile(Upload $upload)
     {
         $path = $upload->stored_filename;
-        $disk = 'private';
 
+        // إذا كان الملف في tmpfs
+        if (strpos($path, '/tmp/ultrafast_processing') === 0 && file_exists($path)) {
+            return response()->file($path);
+        }
+
+        // إذا كان الملف في التخزين العادي
+        $disk = 'private';
         if (empty($path) || !Storage::disk($disk)->exists($path)) {
             abort(404, 'الملف غير موجود أو مساره مفقود في قاعدة البيانات.');
         }
@@ -469,11 +544,7 @@ class UploadController extends Controller
 
         $zip = new ZipArchive;
         $zipFileName = 'groups_for_' . $upload->original_filename . '.zip';
-        $tempPath = storage_path('app/temp/' . $zipFileName);
-
-        if (!File::isDirectory(storage_path('app/temp'))) {
-            File::makeDirectory(storage_path('app/temp'), 0755, true);
-        }
+        $tempPath = '/tmp/ultrafast_processing/' . $zipFileName;
 
         if ($zip->open($tempPath, ZipArchive::CREATE | ZipArchive::OVERWRITE) === TRUE) {
             $errors = [];
@@ -500,5 +571,22 @@ class UploadController extends Controller
         }
 
         return redirect()->back()->with('error', 'حدث خطأ أثناء إنشاء ملف ZIP.');
+    }
+
+    /**
+     * دالة جديدة: الحصول على حالة النظام
+     */
+    public function getSystemStatus()
+    {
+        return response()->json([
+            'success' => true,
+            'system' => [
+                'tmpfs_status' => $this->fastProcessingService->getTmpfsStatus(),
+                'memory_usage' => round(memory_get_usage(true) / 1024 / 1024, 2),
+                'peak_memory' => round(memory_get_peak_usage(true) / 1024 / 1024, 2),
+                'load_average' => sys_getloadavg(),
+                'disk_free_space' => round(disk_free_space('/') / 1024 / 1024, 2)
+            ]
+        ]);
     }
 }
