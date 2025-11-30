@@ -37,12 +37,7 @@
 
             <!-- معلومات الملفات -->
             <div id="files-info" class="hidden bg-yellow-50 p-4 rounded-lg border border-yellow-200">
-                <div class="flex justify-between items-center mb-2">
-                    <h4 class="font-semibold text-yellow-800">الملفات المختارة:</h4>
-                    <button type="button" onclick="checkSystemStatus()" class="text-blue-500 hover:text-blue-700 text-sm">
-                        <i class="fa-solid fa-circle-info ml-1"></i> فحص حالة النظام
-                    </button>
-                </div>
+
                 <div id="files-list" class="space-y-2 max-h-40 overflow-y-auto"></div>
                 <div class="mt-3 flex justify-between items-center text-sm">
                     <div class="space-y-1">
@@ -179,34 +174,6 @@ function showToast(message, type = 'info') {
     }, 5000);
 }
 
-// فحص حالة النظام
-async function checkSystemStatus() {
-    try {
-        const response = await fetch('{{ route("uploads.system.status") }}');
-        const data = await response.json();
-
-        if (data.success) {
-            const systemInfo = data.system;
-            const systemStatus = document.getElementById('system-status');
-            const systemInfoElement = document.getElementById('system-info');
-
-            systemInfoElement.innerHTML = `
-                TMPFS: ${systemInfo.tmpfs_status.free_mb}MB متاحة |
-                الذاكرة: ${systemInfo.memory_usage}MB |
-                التحميل: ${systemInfo.load_average[0].toFixed(2)}
-            `;
-
-            systemStatus.classList.remove('hidden');
-
-            // إخفاء تلقائي بعد 5 ثواني
-            setTimeout(() => {
-                systemStatus.classList.add('hidden');
-            }, 5000);
-        }
-    } catch (error) {
-        console.error('System status check failed:', error);
-    }
-}
 
 // تنسيق حجم الملف
 function formatFileSize(bytes) {
