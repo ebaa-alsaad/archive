@@ -21,25 +21,22 @@ Route::middleware(['auth'])->group(function () {
     // ----------------------
 
     Route::prefix('uploads')->name('uploads.')->controller(UploadController::class)->group(function () {
-        // الصفحات الأساسية
         Route::get('/', 'index')->name('index');
         Route::get('/create', 'create')->name('create');
+        Route::post('/', 'store')->name('store');
         Route::get('/{upload}', 'show')->name('show');
-        Route::patch('/{upload}', 'update')->name('update');
         Route::delete('/{upload}', 'destroy')->name('destroy');
 
-        // نظام الرفع المحلي الجديد
-        Route::post('/init', 'initUpload')->name('init');
-        Route::post('/chunk', 'uploadChunk')->name('chunk');
-        Route::post('/abort', 'abortUpload')->name('abort');
-        Route::post('/direct', 'directUpload')->name('direct');
-
-        // الملفات والحالة
-        Route::get('/file/{upload}', 'showFile')->name('file');
+        // Custom routes
         Route::get('/{upload}/status', 'checkStatus')->name('status');
-        Route::get('/{upload}/download-all', 'downloadAllGroupsZip')->name('download_all_groups');
-    });
+        Route::get('/uploaded-file/{upload}', 'showFile')->name('show_file');
+        Route::get('/{upload}/download-all',  'downloadAllGroupsZip')->name('download_all_groups');
+        Route::post('/{upload}/process','process')->name('process');
 
+        // الرواتب الجديدة للملفات المتعددة
+        Route::post('/status/multi', 'checkMultiStatus')->name('status.multi');
+        Route::post('/download/multi', 'downloadMultiZip')->name('download.multi');
+    });
      // ----------------------
     // Group Routes
     // ----------------------
