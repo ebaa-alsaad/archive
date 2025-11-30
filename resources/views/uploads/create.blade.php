@@ -67,11 +67,29 @@ async function uploadFile(file) {
             // retry mechanism
             for (let attempt = 1; attempt <= 3; attempt++) {
                 try {
-                    const presignResp = await fetch('{{ route('uploads.presign') }}', {
-                        method: 'POST',
-                        headers: {'Content-Type':'application/json','X-CSRF-TOKEN':'{{ csrf_token() }}'},
-                        body: JSON.stringify({ key, uploadId, partNumber })
+                    const completeResp = await fetch('{{ route('uploads.complete') }}', {
+                    method: 'POST',
+                    headers: {'Content-Type':'application/json','X-CSRF-TOKEN':'{{ csrf_token() }}'},
+                    body: JSON.stringify({ key, uploadId, parts, original_filename: file.name })
                     });
+
+                    // تحقق قبل parse
+                    const text = await completeResp.text();
+                    try {
+                    const completeData = JSON.parse(text);
+                    if (completeData.success) {
+                        statusEl.textContent = 'تم رفع الملف بنجاح';
+                        barEl.style.backgroundColor = 'green';
+                    } else {
+                        statusEl.textContent = 'فشل الرفع: ' + (completeData.error || '');
+                        barEl.style.backgroundColor = 'red';
+                    }
+                    } catch(e) {
+                    console.error('Response ليس JSON:', text);
+                    statusEl.textContent = 'فشل الرفع: Response غير صالح';
+                    barEl.style.backgroundColor = 'red';
+                    }
+
                     const { url } = await presignResp.json();
 
                     const uploadResp = await fetch(url, { method: 'PUT', body: blob });
