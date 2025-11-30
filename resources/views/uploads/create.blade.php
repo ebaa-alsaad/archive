@@ -3,16 +3,13 @@
 @section('content')
 <div class="max-w-6xl mx-auto space-y-8">
     <h2 class="text-4xl font-extrabold text-gray-800 text-center">
-        <i class="fa-solid fa-bolt text-yellow-500 ml-3"></i> معالجة فائقة السرعة - النسخة المحسنة
+        <i class="fa-solid fa-bolt text-yellow-500 ml-3"></i> رفع الملفات
     </h2>
 
     <!-- معلومات النظام -->
     <div id="system-status" class="bg-blue-50 p-4 rounded-lg border border-blue-200 hidden">
         <div class="flex justify-between items-center">
-            <div class="flex items-center space-x-2 space-x-reverse">
-                <i class="fa-solid fa-server text-blue-500"></i>
-                <span class="text-sm font-medium text-blue-800">حالة النظام:</span>
-            </div>
+
             <div id="system-info" class="text-xs text-blue-600"></div>
         </div>
     </div>
@@ -32,7 +29,6 @@
                         <p class="mb-2 text-xl text-gray-700 font-bold">
                             <span class="text-yellow-600">اسحب وأفلت ملفات PDF</span> أو انقر للتحميل
                         </p>
-                        <p class="text-sm text-gray-500 mb-2">معالجة فائقة السرعة باستخدام TMPFS</p>
                         <p class="text-xs text-gray-400">الحد الأقصى 100MB لكل ملف • معالجة على دفعات</p>
                         <div id="file-list" class="mt-4 space-y-2 max-h-32 overflow-y-auto hidden"></div>
                     </div>
@@ -62,7 +58,7 @@
             <!-- تقدم المعالجة -->
             <div id="processing-progress-container" class="space-y-3 hidden">
                 <div class="flex justify-between items-center text-sm font-semibold text-gray-700">
-                    <span id="processing-progress-message">جاري المعالجة الفائقة...</span>
+                    <span id="processing-progress-message">جاري المعالجة ...</span>
                     <span id="processing-progress-percentage">0%</span>
                 </div>
                 <div class="w-full bg-gray-200 rounded-full h-2.5">
@@ -95,7 +91,7 @@
             <button type="submit" id="start-processing"
                     disabled
                     class="w-full bg-gradient-to-r from-yellow-500 to-yellow-400 text-white px-8 py-4 rounded-xl font-bold text-lg shadow-lg disabled:opacity-50 disabled:cursor-not-allowed hover:from-yellow-600 hover:to-yellow-500 transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98]">
-                <i class="fa-solid fa-bolt ml-2"></i> بدء المعالجة الفائقة
+                <i class="fa-solid fa-bolt ml-2"></i> بدء المعالجة
             </button>
         </form>
     </div>
