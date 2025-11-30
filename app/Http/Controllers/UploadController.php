@@ -96,25 +96,25 @@ class UploadController extends Controller
     }
 
     /**
-     * رفع متعدد للملفات مع معالجة فورية في الخلفية
+     * رفع متعدد سريع - محدث
      */
     public function store(Request $request)
     {
-        // زيادة الحدود للتعامل مع ملفات كبيرة
+        // زيادة الحدود
         ini_set('upload_max_filesize', '500M');
         ini_set('post_max_size', '500M');
-        ini_set('max_execution_time', 0); // لا نهائي للخلفية
-        ini_set('max_input_time', 0);
-        ini_set('memory_limit', '2048M');
+        ini_set('max_execution_time', 300);
+        ini_set('max_input_time', 300);
+        ini_set('memory_limit', '1024M');
 
-        Log::info('Multi-file upload request received', [
+        Log::info('Fast multi-file upload started', [
             'file_count' => $request->hasFile('pdf_files') ? count($request->file('pdf_files')) : 0,
         ]);
 
         try {
             $request->validate([
                 'pdf_files' => 'required|array',
-                'pdf_files.*' => 'required|mimes:pdf|max:512000' // 500MB لكل ملف
+                'pdf_files.*' => 'required|mimes:pdf|max:512000'
             ]);
 
             $files = $request->file('pdf_files');
@@ -135,13 +135,13 @@ class UploadController extends Controller
                     'stored_filename' => $storedName,
                     'file_size' => $file->getSize(),
                     'total_pages' => 0,
-                    'status' => 'queued',
+                    'status' => 'queued', // تأكد من وجودها في الـ enum
                     'user_id' => auth()->id(),
                 ]);
 
                 $uploadIds[] = $upload->id;
 
-                // بدء المعالجة في الخلفية مباشرة
+                // بدء المعالجة في الخلفية
                 $this->startBackgroundProcessing($upload->id);
             }
 
@@ -170,54 +170,51 @@ class UploadController extends Controller
     }
 
     /**
-     * بدء المعالجة في الخلفية - الحل السحري للسرعة
+     * بدء المعالجة في الخلفية - محدث
      */
     private function startBackgroundProcessing($uploadId)
     {
-        // الطريقة 1: استخدام exec لبدء عملية منفصلة (الأسرع)
+        Log::info("Starting background processing", ['upload_id' => $uploadId]);
+
+        // تحديث الحالة إلى processing مباشرة
+        Upload::where('id', $uploadId)->update(['status' => 'processing']);
+
+        // الطريقة 1: استخدام exec (الأسرع)
         if (function_exists('exec') && strtoupper(substr(PHP_OS, 0, 3)) !== 'WIN') {
             $artisanPath = base_path('artisan');
-            $command = "nohup php {$artisanPath} process:upload {$uploadId} > /dev/null 2>&1 & echo $!";
-            exec($command, $output);
-            Log::info('Background processing started via exec', ['upload_id' => $uploadId, 'output' => $output]);
+            $command = "cd " . base_path() . " && nohup php artisan process:upload {$uploadId} > /dev/null 2>&1 & echo $!";
+
+            Log::info("Executing background command", ['command' => $command]);
+
+            exec($command, $output, $returnVar);
+
+            if (!empty($output) && is_numeric($output[0])) {
+                Log::info("Background process started", ['pid' => $output[0], 'upload_id' => $uploadId]);
+                return true;
+            }
         }
-        // الطريقة 3: معالجة فورية (للبيئات البسيطة)
-        else {
-            $this->processUploadImmediate($uploadId);
-        }
+
+        // الطريقة 2: معالجة فورية
+        Log::info("Using immediate processing", ['upload_id' => $uploadId]);
+        return $this->processUploadImmediate($uploadId);
     }
 
     /**
-     * معالجة فورية للبيئات التي لا تدعم الخلفية
+     * معالجة فورية
      */
     private function processUploadImmediate($uploadId)
     {
+        Log::info("Starting immediate processing", ['upload_id' => $uploadId]);
+
         try {
-            ignore_user_abort(true); // الاستمرار حتى لو أغلق المستخدم الصفحة
-            set_time_limit(0); // لا يوجد حد زمني
+            ignore_user_abort(true);
+            set_time_limit(0);
+            ini_set('memory_limit', '4096M');
 
-            $upload = Upload::find($uploadId);
-            if (!$upload) return;
+            // استدعاء عملية المعالجة مباشرة
+            $result = $this->process($uploadId);
 
-            $upload->update(['status' => 'processing']);
-
-            $fullPath = Storage::disk('private')->path($upload->stored_filename);
-
-            // معالجة الملف
-            $pageCount = $this->barcodeService->getPdfPageCount($fullPath);
-            $upload->update(['total_pages' => $pageCount]);
-
-            $groups = $this->barcodeService->processPdf($upload, 'private');
-
-            $upload->update([
-                'status' => 'completed',
-                'processed_at' => now()
-            ]);
-
-            Log::info('Immediate processing completed', [
-                'upload_id' => $uploadId,
-                'groups_count' => count($groups)
-            ]);
+            return $result->getData()->success ?? false;
 
         } catch (\Exception $e) {
             Log::error('Immediate processing failed', [
@@ -225,12 +222,12 @@ class UploadController extends Controller
                 'error' => $e->getMessage()
             ]);
 
-            if (isset($upload)) {
-                $upload->update([
-                    'status' => 'failed',
-                    'error_message' => $e->getMessage()
-                ]);
-            }
+            Upload::where('id', $uploadId)->update([
+                'status' => 'failed',
+                'error_message' => $e->getMessage()
+            ]);
+
+            return false;
         }
     }
 
@@ -239,10 +236,17 @@ class UploadController extends Controller
      */
     public function process($uploadId)
     {
+        Log::info("Processing upload", ['upload_id' => $uploadId]);
+
         try {
             $upload = Upload::findOrFail($uploadId);
 
             if (!in_array($upload->status, ['queued', 'processing'])) {
+                Log::warning("Upload not in processable state", [
+                    'upload_id' => $uploadId,
+                    'current_status' => $upload->status
+                ]);
+
                 return response()->json([
                     'success' => false,
                     'error' => 'الملف ليس في حالة معالجة. الحالة الحالية: ' . $upload->status
@@ -268,7 +272,8 @@ class UploadController extends Controller
 
             Log::info('Processing completed successfully', [
                 'upload_id' => $upload->id,
-                'groups_count' => count($groups)
+                'groups_count' => count($groups),
+                'total_pages' => $pageCount
             ]);
 
             return response()->json([
@@ -281,7 +286,8 @@ class UploadController extends Controller
         } catch (\Exception $e) {
             Log::error('Processing failed', [
                 'upload_id' => $uploadId,
-                'error_message' => $e->getMessage()
+                'error_message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ]);
 
             if (isset($upload)) {
@@ -440,10 +446,12 @@ class UploadController extends Controller
     private function getStatusMessage($status)
     {
         $messages = [
-            'processing' => 'جاري معالجة الملف...',
+            'pending' => 'في انتظار الرفع',
+            'uploading' => 'جاري الرفع',
+            'queued' => 'في قائمة الانتظار',
+            'processing' => 'جاري المعالجة',
             'completed' => 'تمت المعالجة بنجاح',
-            'failed' => 'فشلت المعالجة',
-            'queued' => 'في قائمة الانتظار'
+            'failed' => 'فشلت المعالجة'
         ];
 
         return $messages[$status] ?? 'حالة غير معروفة';
