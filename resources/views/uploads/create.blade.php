@@ -3,8 +3,19 @@
 @section('content')
 <div class="max-w-6xl mx-auto space-y-8">
     <h2 class="text-4xl font-extrabold text-gray-800 text-center">
-        <i class="fa-solid fa-bolt text-yellow-500 ml-3"></i> معالجة فائقة السرعة
+        <i class="fa-solid fa-bolt text-yellow-500 ml-3"></i> معالجة فائقة السرعة - النسخة المحسنة
     </h2>
+
+    <!-- معلومات النظام -->
+    <div id="system-status" class="bg-blue-50 p-4 rounded-lg border border-blue-200 hidden">
+        <div class="flex justify-between items-center">
+            <div class="flex items-center space-x-2 space-x-reverse">
+                <i class="fa-solid fa-server text-blue-500"></i>
+                <span class="text-sm font-medium text-blue-800">حالة النظام:</span>
+            </div>
+            <div id="system-info" class="text-xs text-blue-600"></div>
+        </div>
+    </div>
 
     <div id="toast-container" class="fixed top-5 right-5 z-[100] space-y-2 max-w-sm"></div>
 
@@ -21,8 +32,8 @@
                         <p class="mb-2 text-xl text-gray-700 font-bold">
                             <span class="text-yellow-600">اسحب وأفلت ملفات PDF</span> أو انقر للتحميل
                         </p>
-                        <p class="text-sm text-gray-500 mb-2">معالجة فائقة السرعة - بدون تخزين مؤقت</p>
-                        <p class="text-xs text-gray-400">الحد الأقصى 500MB لكل ملف • معالجة فورية</p>
+                        <p class="text-sm text-gray-500 mb-2">معالجة فائقة السرعة باستخدام TMPFS</p>
+                        <p class="text-xs text-gray-400">الحد الأقصى 100MB لكل ملف • معالجة على دفعات</p>
                         <div id="file-list" class="mt-4 space-y-2 max-h-32 overflow-y-auto hidden"></div>
                     </div>
                 </div>
@@ -30,10 +41,18 @@
 
             <!-- معلومات الملفات -->
             <div id="files-info" class="hidden bg-yellow-50 p-4 rounded-lg border border-yellow-200">
-                <h4 class="font-semibold text-yellow-800 mb-2">الملفات المختارة:</h4>
-                <div id="files-list" class="space-y-2"></div>
+                <div class="flex justify-between items-center mb-2">
+                    <h4 class="font-semibold text-yellow-800">الملفات المختارة:</h4>
+                    <button type="button" onclick="checkSystemStatus()" class="text-blue-500 hover:text-blue-700 text-sm">
+                        <i class="fa-solid fa-circle-info ml-1"></i> فحص حالة النظام
+                    </button>
+                </div>
+                <div id="files-list" class="space-y-2 max-h-40 overflow-y-auto"></div>
                 <div class="mt-3 flex justify-between items-center text-sm">
-                    <span id="total-size" class="text-yellow-600 font-medium"></span>
+                    <div class="space-y-1">
+                        <span id="total-size" class="text-yellow-600 font-medium"></span>
+                        <span id="files-count" class="text-yellow-500 text-xs"></span>
+                    </div>
                     <button type="button" onclick="clearFiles()" class="text-red-500 hover:text-red-700 p-2">
                         <i class="fa-solid fa-times"></i> إزالة الكل
                     </button>
@@ -49,6 +68,27 @@
                 <div class="w-full bg-gray-200 rounded-full h-2.5">
                     <div id="processing-progress-bar" class="bg-yellow-500 h-2.5 rounded-full transition-all duration-300 ease-out" style="width: 0%"></div>
                 </div>
+
+                <!-- معلومات إضافية -->
+                <div class="grid grid-cols-2 gap-4 text-xs text-gray-600">
+                    <div class="flex justify-between">
+                        <span>الملفات المكتملة:</span>
+                        <span id="completed-files">0</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span>المجموعات المنشأة:</span>
+                        <span id="total-groups">0</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span>الصفحات المعالجة:</span>
+                        <span id="total-pages">0</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span>الحجم الكلي:</span>
+                        <span id="total-size-processing">0 MB</span>
+                    </div>
+                </div>
+
                 <div id="files-status-container" class="space-y-2 max-h-40 overflow-y-auto"></div>
             </div>
 
@@ -67,11 +107,26 @@
             <h3 class="text-xl font-bold text-green-800 mb-2">تمت المعالجة بنجاح!</h3>
             <p class="text-green-600 mb-2" id="results-message"></p>
             <p class="text-green-500 text-sm mb-4" id="results-details"></p>
+
+            <!-- إحصائيات النتائج -->
+            <div class="bg-white p-4 rounded-lg border border-green-200 mb-4">
+                <div class="grid grid-cols-2 gap-4 text-sm">
+                    <div class="text-center">
+                        <div class="text-2xl font-bold text-green-600" id="result-files-count">0</div>
+                        <div class="text-green-500">ملف معالج</div>
+                    </div>
+                    <div class="text-center">
+                        <div class="text-2xl font-bold text-blue-600" id="result-groups-count">0</div>
+                        <div class="text-blue-500">مجموعة منشأة</div>
+                    </div>
+                </div>
+            </div>
+
             <div class="flex gap-3 justify-center flex-wrap">
-                <button id="download-all-btn" class="bg-green-500 text-white px-6 py-2 rounded-lg hover:bg-green-600 transition-colors">
+                <button id="download-all-btn" class="bg-green-500 text-white px-6 py-2 rounded-lg hover:bg-green-600 transition-colors flex items-center">
                     <i class="fa-solid fa-download ml-2"></i> تحميل النتائج
                 </button>
-                <button onclick="resetToUpload()" class="bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600 transition-colors">
+                <button onclick="resetToUpload()" class="bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600 transition-colors flex items-center">
                     <i class="fa-solid fa-plus ml-2"></i> معالجة ملفات جديدة
                 </button>
             </div>
@@ -95,6 +150,7 @@
 // المتغيرات العامة
 let currentUploadIds = [];
 let processingInterval = null;
+let systemCheckInterval = null;
 
 // دالة لعرض الإشعارات
 function showToast(message, type = 'info') {
@@ -127,6 +183,35 @@ function showToast(message, type = 'info') {
     }, 5000);
 }
 
+// فحص حالة النظام
+async function checkSystemStatus() {
+    try {
+        const response = await fetch('{{ route("uploads.system.status") }}');
+        const data = await response.json();
+
+        if (data.success) {
+            const systemInfo = data.system;
+            const systemStatus = document.getElementById('system-status');
+            const systemInfoElement = document.getElementById('system-info');
+
+            systemInfoElement.innerHTML = `
+                TMPFS: ${systemInfo.tmpfs_status.free_mb}MB متاحة |
+                الذاكرة: ${systemInfo.memory_usage}MB |
+                التحميل: ${systemInfo.load_average[0].toFixed(2)}
+            `;
+
+            systemStatus.classList.remove('hidden');
+
+            // إخفاء تلقائي بعد 5 ثواني
+            setTimeout(() => {
+                systemStatus.classList.add('hidden');
+            }, 5000);
+        }
+    } catch (error) {
+        console.error('System status check failed:', error);
+    }
+}
+
 // تنسيق حجم الملف
 function formatFileSize(bytes) {
     if (bytes === 0) return '0 Bytes';
@@ -150,15 +235,15 @@ function updateFileInput(files) {
     Array.from(files).forEach((file, index) => {
         const fileSizeMB = file.size / 1024 / 1024;
 
-        // التحقق من صحة الملف
+        // التحقق من صحة الملف - حدود واقعية
         if (file.type !== 'application/pdf') {
             showToast(`الملف "${file.name}" ليس من نوع PDF`, 'error');
             hasInvalidFile = true;
             return;
         }
 
-        if (fileSizeMB > 500) {
-            showToast(`الملف "${file.name}" حجمه أكبر من 500MB`, 'error');
+        if (fileSizeMB > 100) { // 100MB حد واقعي
+            showToast(`الملف "${file.name}" حجمه أكبر من 100MB`, 'error');
             hasInvalidFile = true;
             return;
         }
@@ -167,15 +252,15 @@ function updateFileInput(files) {
 
         // إضافة الملف للقائمة
         const fileElement = document.createElement('div');
-        fileElement.className = 'flex justify-between items-center p-2 bg-white rounded border';
+        fileElement.className = 'flex justify-between items-center p-2 bg-white rounded border hover:bg-gray-50 transition-colors';
         fileElement.innerHTML = `
-            <div class="flex items-center space-x-2 space-x-reverse">
-                <i class="fa-solid fa-file-pdf text-red-500"></i>
-                <span class="text-sm font-medium truncate max-w-xs">${file.name}</span>
+            <div class="flex items-center space-x-2 space-x-reverse min-w-0 flex-1">
+                <i class="fa-solid fa-file-pdf text-red-500 flex-shrink-0"></i>
+                <span class="text-sm font-medium truncate">${file.name}</span>
             </div>
-            <div class="flex items-center space-x-2 space-x-reverse">
-                <span class="text-xs text-gray-500">${formatFileSize(file.size)}</span>
-                <button type="button" onclick="removeFile(${index})" class="text-red-400 hover:text-red-600">
+            <div class="flex items-center space-x-2 space-x-reverse flex-shrink-0">
+                <span class="text-xs text-gray-500 whitespace-nowrap">${formatFileSize(file.size)}</span>
+                <button type="button" onclick="removeFile(${index})" class="text-red-400 hover:text-red-600 p-1 rounded">
                     <i class="fa-solid fa-times"></i>
                 </button>
             </div>
@@ -184,16 +269,37 @@ function updateFileInput(files) {
     });
 
     if (hasInvalidFile) {
-        resetFileInput();
+        // إزالة الملفات غير الصالحة فقط
+        const fileInput = document.getElementById('file-input');
+        const validFiles = Array.from(fileInput.files).filter(file => {
+            const fileSizeMB = file.size / 1024 / 1024;
+            return file.type === 'application/pdf' && fileSizeMB <= 100;
+        });
+
+        const newFileList = new DataTransfer();
+        validFiles.forEach(file => newFileList.items.add(file));
+        fileInput.files = newFileList.files;
+
+        if (validFiles.length === 0) {
+            resetFileInput();
+            return;
+        }
+
+        // تحديث مع الملفات الصالحة فقط
+        updateFileInput(fileInput.files);
         return;
     }
 
     if (files.length > 0) {
         filesInfo.classList.remove('hidden');
         document.getElementById('total-size').textContent = `إجمالي الحجم: ${formatFileSize(totalSize)}`;
+        document.getElementById('files-count').textContent = `${files.length} ملف`;
         startButton.disabled = false;
 
         showToast(`تم اختيار ${files.length} ملف للمعالجة الفائقة`, 'success');
+
+        // فحص تلقائي لحالة النظام
+        setTimeout(checkSystemStatus, 1000);
     } else {
         resetFileInput();
     }
@@ -224,6 +330,7 @@ function resetFileInput() {
     fileInput.value = '';
     document.getElementById('start-processing').disabled = true;
     document.getElementById('files-info').classList.add('hidden');
+    document.getElementById('system-status').classList.add('hidden');
 }
 
 // إعادة التعيين للرفع الجديد
@@ -239,6 +346,11 @@ function resetToUpload() {
     if (processingInterval) {
         clearInterval(processingInterval);
         processingInterval = null;
+    }
+
+    if (systemCheckInterval) {
+        clearInterval(systemCheckInterval);
+        systemCheckInterval = null;
     }
 }
 
@@ -258,18 +370,21 @@ dropZone.addEventListener('dragover', (e) => {
     e.preventDefault();
     e.stopPropagation();
     dropZone.classList.add('border-yellow-500', 'bg-yellow-50');
+    document.getElementById('upload-icon').classList.add('text-yellow-600');
 });
 
 dropZone.addEventListener('dragleave', (e) => {
     e.preventDefault();
     e.stopPropagation();
     dropZone.classList.remove('border-yellow-500', 'bg-yellow-50');
+    document.getElementById('upload-icon').classList.remove('text-yellow-600');
 });
 
 dropZone.addEventListener('drop', (e) => {
     e.preventDefault();
     e.stopPropagation();
     dropZone.classList.remove('border-yellow-500', 'bg-yellow-50');
+    document.getElementById('upload-icon').classList.remove('text-yellow-600');
 
     const files = e.dataTransfer.files;
     if (files.length > 0) {
@@ -279,8 +394,14 @@ dropZone.addEventListener('drop', (e) => {
                 dataTransfer.items.add(file);
             }
         });
-        document.getElementById('file-input').files = dataTransfer.files;
-        updateFileInput(document.getElementById('file-input').files);
+
+        if (dataTransfer.files.length > 0) {
+            document.getElementById('file-input').files = dataTransfer.files;
+            updateFileInput(document.getElementById('file-input').files);
+            showToast(`تم إضافة ${dataTransfer.files.length} ملف`, 'success');
+        } else {
+            showToast('لم يتم العثور على ملفات PDF صالحة', 'warning');
+        }
     }
 });
 
@@ -296,11 +417,20 @@ document.getElementById('upload-form').addEventListener('submit', async function
 
     const startButton = document.getElementById('start-processing');
     startButton.disabled = true;
-    startButton.innerHTML = '<i class="fa-solid fa-bolt fa-spin ml-2"></i> جاري المعالجة الفائقة...';
+    startButton.innerHTML = '<i class="fa-solid fa-bolt fa-spin ml-2"></i> جاري بدء المعالجة...';
 
     // إظهار شريط التقدم
     document.getElementById('processing-progress-container').classList.remove('hidden');
-    updateProcessingStatus(10, 'جاري بدء المعالجة الفائقة...');
+    updateProcessingStatus(5, 'جاري فحص النظام والتحضير...');
+
+    // فحص حالة النظام قبل البدء
+    try {
+        await checkSystemStatus();
+    } catch (error) {
+        console.error('System check failed:', error);
+    }
+
+    updateProcessingStatus(15, 'جاري تحميل الملفات...');
 
     const formData = new FormData();
     Array.from(files).forEach(file => {
@@ -326,6 +456,7 @@ document.getElementById('upload-form').addEventListener('submit', async function
         currentUploadIds = data.results.map(result => result.upload_id);
 
         showToast(`تم بدء معالجة ${data.file_count} ملف بنجاح!`, 'success');
+        updateProcessingStatus(30, 'جاري معالجة الملفات على دفعات...');
 
         // بدء تتبع الحالة
         startProcessingTracking();
@@ -342,6 +473,9 @@ function startProcessingTracking() {
     if (processingInterval) {
         clearInterval(processingInterval);
     }
+
+    let consecutiveErrors = 0;
+    const maxConsecutiveErrors = 3;
 
     processingInterval = setInterval(async () => {
         if (currentUploadIds.length === 0) return;
@@ -364,6 +498,7 @@ function startProcessingTracking() {
                 throw new Error(data.error || 'خطأ في التحقق من الحالة');
             }
 
+            consecutiveErrors = 0; // إعادة تعيين عداد الأخطاء
             updateProcessingUI(data);
 
             if (data.all_completed) {
@@ -376,8 +511,14 @@ function startProcessingTracking() {
 
         } catch (error) {
             console.error('Status check error:', error);
+            consecutiveErrors++;
+
+            if (consecutiveErrors >= maxConsecutiveErrors) {
+                clearInterval(processingInterval);
+                showError('فشل الاتصال بالخادم. يرجى المحاولة لاحقاً.');
+            }
         }
-    }, 2000); // التحقق كل ثانيتين
+    }, 1500); // التحقق كل 1.5 ثانية (أسرع)
 }
 
 // تحديث واجهة المعالجة
@@ -389,39 +530,47 @@ function updateProcessingUI(data) {
     statusContainer.innerHTML = '';
 
     let completedCount = 0;
+    let processingCount = 0;
+    let failedCount = 0;
 
     data.statuses.forEach(status => {
         const statusElement = document.createElement('div');
-        statusElement.className = 'flex justify-between items-center p-2 bg-white rounded border text-sm';
+        statusElement.className = 'flex justify-between items-center p-2 bg-white rounded border text-sm hover:bg-gray-50 transition-colors';
 
         let statusColor = 'text-gray-500';
         let statusIcon = 'fa-clock';
+        let statusBadge = '';
 
         switch (status.status) {
             case 'completed':
                 statusColor = 'text-green-600';
                 statusIcon = 'fa-circle-check';
                 completedCount++;
+                statusBadge = status.groups_count > 0 ?
+                    `<span class="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">${status.groups_count} مجموعة</span>` : '';
                 break;
             case 'processing':
                 statusColor = 'text-yellow-600';
                 statusIcon = 'fa-bolt fa-spin';
+                processingCount++;
+                statusBadge = '<span class="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded">جاري المعالجة</span>';
                 break;
             case 'failed':
                 statusColor = 'text-red-600';
                 statusIcon = 'fa-circle-exclamation';
+                failedCount++;
+                statusBadge = '<span class="text-xs bg-red-100 text-red-800 px-2 py-1 rounded">فشل</span>';
                 break;
         }
 
         statusElement.innerHTML = `
-            <div class="flex items-center space-x-2 space-x-reverse">
-                <i class="fa-solid ${statusIcon} ${statusColor}"></i>
-                <span class="truncate max-w-xs">${status.filename}</span>
+            <div class="flex items-center space-x-2 space-x-reverse min-w-0 flex-1">
+                <i class="fa-solid ${statusIcon} ${statusColor} flex-shrink-0"></i>
+                <span class="truncate">${status.filename}</span>
             </div>
-            <div class="flex items-center space-x-2 space-x-reverse">
-                <span class="text-xs ${statusColor}">${status.message}</span>
-                ${status.groups_count > 0 ?
-                    `<span class="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">${status.groups_count} مجموعة</span>` : ''}
+            <div class="flex items-center space-x-2 space-x-reverse flex-shrink-0">
+                ${statusBadge}
+                <span class="text-xs ${statusColor} whitespace-nowrap">${status.message}</span>
             </div>
         `;
         statusContainer.appendChild(statusElement);
@@ -432,8 +581,21 @@ function updateProcessingUI(data) {
     progressBar.style.width = overallProgress + '%';
     progressPercentage.textContent = overallProgress + '%';
 
-    document.getElementById('processing-progress-message').textContent =
-        `جاري المعالجة الفائقة... (${completedCount}/${data.total_files})`;
+    // تحديث الإحصائيات
+    document.getElementById('completed-files').textContent = `${completedCount}/${data.total_files}`;
+    document.getElementById('total-groups').textContent = data.total_groups;
+    document.getElementById('total-pages').textContent = data.total_pages;
+    document.getElementById('total-size-processing').textContent = `${data.total_size_mb} MB`;
+
+    let progressMessage = `جاري المعالجة... (${completedCount} مكتمل)`;
+    if (processingCount > 0) {
+        progressMessage += `, ${processingCount} قيد المعالجة`;
+    }
+    if (failedCount > 0) {
+        progressMessage += `, ${failedCount} فشل`;
+    }
+
+    document.getElementById('processing-progress-message').textContent = progressMessage;
 }
 
 // تحديث حالة المعالجة
@@ -454,37 +616,62 @@ function showProcessingResults(data) {
     document.getElementById('results-details').textContent =
         `تم إنشاء ${data.total_groups} مجموعة من ${data.total_pages} صفحة`;
 
+    // تحديث إحصائيات النتائج
+    document.getElementById('result-files-count').textContent = data.processed_files;
+    document.getElementById('result-groups-count').textContent = data.total_groups;
+
     // إعداد زر التحميل
     document.getElementById('download-all-btn').onclick = () => {
         downloadResults();
     };
+
+    showToast('اكتملت المعالجة بنجاح!', 'success');
 }
 
 // تحميل النتائج
 async function downloadResults() {
     showToast('جاري تحضير الملفات للتحميل...', 'info');
 
-    const form = document.createElement('form');
-    form.method = 'POST';
-    form.action = '{{ route("uploads.download.results") }}';
+    const downloadBtn = document.getElementById('download-all-btn');
+    const originalText = downloadBtn.innerHTML;
+    downloadBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin ml-2"></i> جاري التحضير...';
+    downloadBtn.disabled = true;
 
-    const tokenInput = document.createElement('input');
-    tokenInput.type = 'hidden';
-    tokenInput.name = '_token';
-    tokenInput.value = '{{ csrf_token() }}';
-    form.appendChild(tokenInput);
+    try {
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = '{{ route("uploads.download.results") }}';
 
-    currentUploadIds.forEach(id => {
-        const input = document.createElement('input');
-        input.type = 'hidden';
-        input.name = 'upload_ids[]';
-        input.value = id;
-        form.appendChild(input);
-    });
+        const tokenInput = document.createElement('input');
+        tokenInput.type = 'hidden';
+        tokenInput.name = '_token';
+        tokenInput.value = '{{ csrf_token() }}';
+        form.appendChild(tokenInput);
 
-    document.body.appendChild(form);
-    form.submit();
-    document.body.removeChild(form);
+        currentUploadIds.forEach(id => {
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'upload_ids[]';
+            input.value = id;
+            form.appendChild(input);
+        });
+
+        document.body.appendChild(form);
+        form.submit();
+        document.body.removeChild(form);
+
+        // إعادة تعيين الزر بعد ثانية
+        setTimeout(() => {
+            downloadBtn.innerHTML = originalText;
+            downloadBtn.disabled = false;
+        }, 1000);
+
+    } catch (error) {
+        console.error('Download error:', error);
+        showToast('فشل في تحضير الملفات للتحميل', 'error');
+        downloadBtn.innerHTML = originalText;
+        downloadBtn.disabled = false;
+    }
 }
 
 // عرض الخطأ
@@ -493,6 +680,17 @@ function showError(message) {
     document.getElementById('error-container').classList.remove('hidden');
     document.getElementById('upload-card').classList.add('hidden');
     document.getElementById('error-message').textContent = message;
+
+    showToast('حدث خطأ في المعالجة', 'error');
+}
+
+// فحص حالة النظام بشكل دوري أثناء المعالجة
+function startSystemMonitoring() {
+    if (systemCheckInterval) {
+        clearInterval(systemCheckInterval);
+    }
+
+    systemCheckInterval = setInterval(checkSystemStatus, 10000); // كل 10 ثواني
 }
 
 // التنظيف
@@ -500,6 +698,15 @@ window.addEventListener('beforeunload', () => {
     if (processingInterval) {
         clearInterval(processingInterval);
     }
+    if (systemCheckInterval) {
+        clearInterval(systemCheckInterval);
+    }
+});
+
+// التهيئة الأولية
+document.addEventListener('DOMContentLoaded', function() {
+    // بدء مراقبة النظام
+    startSystemMonitoring();
 });
 </script>
 
@@ -533,6 +740,34 @@ window.addEventListener('beforeunload', () => {
 
 #processing-progress-bar {
     transition: width 0.3s ease;
+}
+
+/* تحسينات للشريط المتحرك */
+.progress-bar {
+    background: linear-gradient(90deg, #f59e0b, #eab308, #f59e0b);
+    background-size: 200% 100%;
+    animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+}
+
+/* تحسينات للاستجابة */
+@media (max-width: 768px) {
+    .max-w-6xl {
+        max-width: 100%;
+        padding: 0 1rem;
+    }
+
+    #drop-zone {
+        height: 200px;
+    }
+
+    .text-4xl {
+        font-size: 2rem;
+    }
 }
 </style>
 @endsection
