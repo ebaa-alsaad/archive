@@ -39,10 +39,10 @@ Route::middleware(['auth'])->group(function () {
         Route::post('/presign', 'generatePresignedUrl')->name('presign');
 
         // multipart s3 endpoints
-        Route::post('/s3/init', 'initMultipart')->name('s3.init');
-        Route::post('/s3/part',  'presignPart')->name('s3.part');
-        Route::post('/s3/complete', 'completeMultipart')->name('s3.complete');
-        Route::post('/s3/abort',  'abortMultipart')->name('s3.abort');
+        Route::post('/init', 'initMultipart')->name('init');
+        Route::post('/presign',  'presignPart')->name('presign');
+        Route::post('/complete', 'completeMultipart')->name('complete');
+        Route::post('/abort',  'abortMultipart')->name('abort');
 
         // status & file
         Route::get('/{upload}/status',  'checkStatus')->name('status');
