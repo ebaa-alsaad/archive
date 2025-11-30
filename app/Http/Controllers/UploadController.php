@@ -26,7 +26,7 @@ class UploadController extends Controller
         $this->s3 = new S3Client([
             'version' => 'latest',
             'region' => $this->region,
-            'endpoint' => env('AWS_URL'), // مهم لـ MinIO
+            'endpoint' => env('AWS_ENDPOINT'),
             'use_path_style_endpoint' => true, // ضروري لـ MinIO
             'credentials' => [
                 'key' => env('AWS_ACCESS_KEY_ID'),
