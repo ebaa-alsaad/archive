@@ -24,31 +24,19 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/create', 'create')->name('create');
         Route::post('/', 'store')->name('store');
         Route::get('/{upload}', 'show')->name('show');
-        Route::get('/{upload}/edit', 'edit')->name('edit');
         Route::patch('/{upload}', 'update')->name('update');
         Route::delete('/{upload}', 'destroy')->name('destroy');
 
-        // Custom routes
-
-        Route::get('/uploaded-file/{upload}', 'showFile')->name('show_file');
-        Route::get('/{upload}/download-all',  'downloadAllGroupsZip')->name('download_all_groups');
-        Route::post('/chunk', 'uploadChunk')->name('chunk');
-        Route::post('/init', 'initUpload')->name('init');
-
-        Route::post('/process','process')->name('process');
-        Route::post('/presign', 'generatePresignedUrl')->name('presign');
-
-        // multipart s3 endpoints
+        // Multipart upload routes
         Route::post('/init', 'initMultipart')->name('init');
-        Route::post('/presign',  'presignPart')->name('presign');
+        Route::post('/presign', 'presignPart')->name('presign');
         Route::post('/complete', 'completeMultipart')->name('complete');
-        Route::post('/abort',  'abortMultipart')->name('abort');
+        Route::post('/abort', 'abortMultipart')->name('abort');
 
-        // status & file
-        Route::get('/{upload}/status',  'checkStatus')->name('status');
-        Route::get('/file/{id}', 'showFile')->name('file');
-
-
+        // Additional routes
+        Route::get('/file/{upload}', 'showFile')->name('file');
+        Route::get('/{upload}/status', 'checkStatus')->name('status');
+        Route::get('/{upload}/download-all', 'downloadAllGroupsZip')->name('download_all_groups');
     });
 
      // ----------------------

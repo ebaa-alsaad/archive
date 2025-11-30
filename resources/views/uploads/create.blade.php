@@ -32,7 +32,7 @@ async function uploadFile(file) {
     const fileDiv = document.createElement('div');
     fileDiv.classList.add('p-3', 'border', 'rounded', 'bg-gray-50');
     fileDiv.innerHTML = `
-        <strong>${file.name}</strong> - <span class="status text-gray-600">بدء الرفع...</span>
+        <strong>${file.name}</strong> - <span class="status text-gray-600">جاري التحضير...</span>
         <div class="progress bg-gray-200 rounded mt-2 h-4 w-full overflow-hidden">
             <div class="bar bg-blue-500 h-4 w-0 rounded"></div>
         </div>`;
@@ -42,81 +42,138 @@ async function uploadFile(file) {
     const barEl = fileDiv.querySelector('.bar');
 
     try {
-        // 1️⃣ Init multipart
+        // 🔍 التحقق من اتصال الخادم أولاً
+        statusEl.textContent = 'جاري الاتصال بالخادم...';
+
+        // 1️⃣ بدء عملية الرفع
         const initResp = await fetch('{{ route('uploads.init') }}', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'X-CSRF-TOKEN': '{{ csrf_token() }}'
             },
-            body: JSON.stringify({ filename: file.name, content_type: file.type })
+            body: JSON.stringify({
+                filename: file.name,
+                content_type: file.type || 'application/octet-stream'
+            })
         });
-        const { uploadId, key } = await initResp.json();
 
-        // 2️⃣ Split file into chunks
+        if (!initResp.ok) {
+            throw new Error(`فشل الاتصال: ${initResp.status} ${initResp.statusText}`);
+        }
+
+        const initData = await initResp.json();
+
+        if (!initData.success) {
+            throw new Error(initData.error || 'فشل في بدء عملية الرفع');
+        }
+
+        const { uploadId, key } = initData;
+
+        // 2️⃣ تقسيم الملف إلى أجزاء
         const chunkSize = 5 * 1024 * 1024; // 5MB
         const totalParts = Math.ceil(file.size / chunkSize);
         let parts = [];
 
-        // 3️⃣ رفع الأجزاء مع retry
+        statusEl.textContent = `جاري الرفع (0/${totalParts})...`;
+
+        // 3️⃣ رفع الأجزاء
         for (let partNumber = 1; partNumber <= totalParts; partNumber++) {
             const start = (partNumber - 1) * chunkSize;
             const end = Math.min(file.size, start + chunkSize);
             const blob = file.slice(start, end);
 
-            let presignResp, url;
-            for (let attempt = 1; attempt <= 3; attempt++) {
-                try {
-                    presignResp = await fetch('{{ route('uploads.presign') }}', {
-                        method: 'POST',
-                        headers: { 'Content-Type':'application/json','X-CSRF-TOKEN':'{{ csrf_token() }}' },
-                        body: JSON.stringify({ key, uploadId, partNumber })
-                    });
-                    url = (await presignResp.json()).url;
-                    break;
-                } catch (err) {
-                    if (attempt === 3) throw err;
+            let presignResp;
+            try {
+                presignResp = await fetch('{{ route('uploads.presign') }}', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                    },
+                    body: JSON.stringify({ key, uploadId, partNumber })
+                });
+
+                if (!presignResp.ok) {
+                    throw new Error(`فشل في الحصول على رابط الرفع: ${presignResp.status}`);
                 }
-            }
 
-            let uploadResp;
-            for (let attempt = 1; attempt <= 3; attempt++) {
-                try {
-                    uploadResp = await fetch(url, { method: 'PUT', body: blob });
-                    break;
-                } catch(err) {
-                    if (attempt === 3) throw err;
+                const presignData = await presignResp.json();
+                const url = presignData.url;
+
+                // رفع الجزء
+                const uploadResp = await fetch(url, {
+                    method: 'PUT',
+                    body: blob,
+                    headers: {
+                        'Content-Type': file.type || 'application/octet-stream'
+                    }
+                });
+
+                if (!uploadResp.ok) {
+                    throw new Error(`فشل في رفع الجزء: ${uploadResp.status}`);
                 }
+
+                const etag = uploadResp.headers.get('ETag');
+                parts.push({
+                    PartNumber: partNumber,
+                    ETag: etag ? etag.replace(/"/g, '') : ''
+                });
+
+                // تحديث التقدم
+                const progress = Math.round((partNumber / totalParts) * 100);
+                barEl.style.width = `${progress}%`;
+                statusEl.textContent = `جاري الرفع (${partNumber}/${totalParts})...`;
+
+            } catch (chunkError) {
+                throw new Error(`فشل في الجزء ${partNumber}: ${chunkError.message}`);
             }
-
-            let etag = uploadResp.headers.get('ETag');
-            parts.push({ PartNumber: partNumber, ETag: etag.replace(/"/g,'') });
-
-            // تحديث شريط التقدم
-            barEl.style.width = `${Math.round((parts.length / totalParts) * 100)}%`;
-            statusEl.textContent = `جارٍ رفع الجزء ${partNumber} من ${totalParts}...`;
         }
 
-        // 4️⃣ Complete multipart
+        // 4️⃣ إكمال عملية الرفع
         const completeResp = await fetch('{{ route('uploads.complete') }}', {
             method: 'POST',
-            headers: { 'Content-Type':'application/json','X-CSRF-TOKEN':'{{ csrf_token() }}' },
-            body: JSON.stringify({ key, uploadId, parts, original_filename: file.name })
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': '{{ csrf_token() }}'
+            },
+            body: JSON.stringify({
+                key,
+                uploadId,
+                parts,
+                original_filename: file.name
+            })
         });
 
         const completeData = await completeResp.json();
+
         if (completeData.success) {
-            statusEl.textContent = 'تم رفع الملف بنجاح';
-            barEl.style.backgroundColor = 'green';
+            statusEl.textContent = 'تم رفع الملف بنجاح 🎉';
+            statusEl.className = 'status text-green-600 font-bold';
+            barEl.style.backgroundColor = '#10B981';
         } else {
-            statusEl.textContent = 'فشل الرفع: ' + (completeData.error || '');
-            barEl.style.backgroundColor = 'red';
+            throw new Error(completeData.error || 'فشل في إكمال عملية الرفع');
         }
 
-    } catch(err) {
-        statusEl.textContent = 'فشل الرفع: ' + err.message;
-        barEl.style.backgroundColor = 'red';
-        console.error(err);
+    } catch (err) {
+        console.error('Upload error:', err);
+        statusEl.textContent = `فشل الرفع: ${err.message}`;
+        statusEl.className = 'status text-red-600 font-bold';
+        barEl.style.backgroundColor = '#EF4444';
+
+        // محاولة إلغاء الرفع في حالة الخطأ
+        try {
+            await fetch('{{ route('uploads.abort') }}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                },
+                body: JSON.stringify({ key, uploadId })
+            });
+        } catch (abortErr) {
+            console.error('Abort failed:', abortErr);
+        }
     }
 }
 </script>

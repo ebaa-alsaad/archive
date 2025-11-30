@@ -254,4 +254,13 @@ class UploadController extends Controller
         $upload->update(['status' => 'processed','total_pages' => $totalPages,'error_message' => null]);
         return true;
     }
+    public function checkS3Connection()
+    {
+        try {
+            $result = $this->s3->listBuckets();
+            return response()->json(['success' => true, 'buckets' => $result['Buckets']]);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
 }
