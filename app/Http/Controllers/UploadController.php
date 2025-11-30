@@ -2,304 +2,470 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
-use App\Models\Upload;
-use App\Models\Group;
-use App\Jobs\ProcessPdfJob;
-use Illuminate\Support\Facades\Log;
 use ZipArchive;
+use Illuminate\Support\Str;
+use Illuminate\Http\Request;
+use App\Models\{Upload, Group};
+use App\Services\BarcodeOCRService;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Redis;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\DB;
 
 class UploadController extends Controller
 {
+    protected $barcodeService;
+
+    public function __construct(BarcodeOCRService $barcodeService)
+    {
+        $this->barcodeService = $barcodeService;
+    }
+
+    public function index()
+    {
+        $uploads = Upload::with(['user', 'groups'])
+            ->orderBy('created_at', 'desc')
+            ->paginate(10);
+
+        return view('uploads.index', compact('uploads'));
+    }
+
     public function create()
     {
         return view('uploads.create');
     }
 
-    public function index()
-    {
-        $uploads = Upload::withCount('groups')->orderBy('created_at', 'desc')->paginate(20);
-        return view('uploads.index', compact('uploads'));
-    }
-
-    public function store(Request $request)
-    {
-        $request->validate([
-            'original_filename' => 'required|string',
-            'stored_filename' => 'required|string',
-        ]);
-
-        $upload = Upload::create([
-            'user_id' => auth()->id(),
-            'original_filename' => $request->original_filename,
-            'stored_filename' => $request->stored_filename,
-            'status' => 'queued'
-        ]);
-
-        ProcessPdfJob::dispatch($upload->id);
-
-        return redirect()->route('uploads.index')->with('success', 'Upload created and queued.');
-    }
-
     public function show(Upload $upload)
     {
-        $upload->load('groups');
+        $upload->load(['groups', 'user']);
         return view('uploads.show', compact('upload'));
     }
 
-    public function update(Request $request, Upload $upload)
+    public function showFile(Upload $upload)
     {
-        $request->validate([
-            'original_filename' => 'required|string',
-            'status' => 'required|string',
-        ]);
+        $path = $upload->stored_filename;
+        $disk = 'private';
 
-        $upload->update($request->only('original_filename', 'status'));
-        return redirect()->route('uploads.show', $upload)->with('success', 'Upload updated.');
-    }
-
-    public function destroy(Upload $upload)
-    {
-        // حذف الملف المحفوظ
-        if (Storage::disk('public')->exists($upload->stored_filename)) {
-            Storage::disk('public')->delete($upload->stored_filename);
+        if (empty($path) || !Storage::disk($disk)->exists($path)) {
+            abort(404, 'الملف غير موجود أو مساره مفقود في قاعدة البيانات.');
         }
 
-        $upload->delete();
-        return redirect()->route('uploads.index')->with('success', 'Upload deleted.');
-    }
-
-    // ----------------------
-    // Local File Upload System
-    // ----------------------
-
-    /**
-     * بدء عملية رفع الملف
-     */
-    public function initUpload(Request $request)
-    {
-        $request->validate([
-            'filename' => 'required|string',
-            'content_type' => 'required|string',
-        ]);
-
-        $userId = auth()->id() ?? 'anonymous';
-        $uniqueId = Str::uuid();
-        $fileName = $uniqueId . '-' . basename($request->filename);
-        $filePath = "uploads/{$userId}/{$fileName}";
-
-        // إنشاء مجلد مؤقت للرفع
-        $tempDir = "uploads/temp/{$uniqueId}";
-        Storage::disk('local')->makeDirectory($tempDir);
-
-        return response()->json([
-            'success' => true,
-            'uploadId' => $uniqueId,
-            'key' => $filePath,
-            'tempDir' => $tempDir
-        ]);
-    }
-
-    /**
-     * رفع جزء من الملف
-     */
-    public function uploadChunk(Request $request)
-    {
-        $request->validate([
-            'key' => 'required|string',
-            'uploadId' => 'required|string',
-            'chunkNumber' => 'required|integer|min:1',
-            'totalChunks' => 'required|integer|min:1',
-            'file' => 'required|file'
-        ]);
-
-        try {
-            $chunk = $request->file('file');
-            $chunkNumber = $request->chunkNumber;
-            $uploadId = $request->uploadId;
-
-            // حفظ الجزء في المجلد المؤقت
-            $chunkPath = "uploads/temp/{$uploadId}/chunk_{$chunkNumber}";
-            Storage::disk('local')->put($chunkPath, file_get_contents($chunk->getRealPath()));
-
-            // إذا كان هذا آخر جزء، دمج الأجزاء
-            if ($chunkNumber == $request->totalChunks) {
-                return $this->mergeChunks($request->key, $uploadId, $request->totalChunks);
-            }
-
-            return response()->json([
-                'success' => true,
-                'message' => 'تم رفع الجزء بنجاح',
-                'chunkNumber' => $chunkNumber
-            ]);
-
-        } catch (\Exception $e) {
-            Log::error('Upload chunk failed', ['error' => $e->getMessage()]);
-            return response()->json(['success' => false, 'error' => $e->getMessage()], 500);
-        }
-    }
-
-    /**
-     * دمج الأجزاء وإنشاء الملف النهائي
-     */
-    private function mergeChunks($filePath, $uploadId, $totalChunks)
-    {
-        try {
-            $finalPath = "public/{$filePath}";
-
-            // التأكد من وجود المجلد النهائي
-            Storage::disk('local')->makeDirectory(dirname($finalPath));
-
-            // فتح الملف النهائي للكتابة
-            $finalFullPath = Storage::disk('local')->path($finalPath);
-            $finalFile = fopen($finalFullPath, 'wb');
-
-            // دمج جميع الأجزاء
-            for ($i = 1; $i <= $totalChunks; $i++) {
-                $chunkPath = "uploads/temp/{$uploadId}/chunk_{$i}";
-                $chunkContent = Storage::disk('local')->get($chunkPath);
-                fwrite($finalFile, $chunkContent);
-
-                // حذف الجزء بعد الدمج
-                Storage::disk('local')->delete($chunkPath);
-            }
-
-            fclose($finalFile);
-
-            // حذف المجلد المؤقت
-            Storage::disk('local')->deleteDirectory("uploads/temp/{$uploadId}");
-
-            // حفظ المعلومات في قاعدة البيانات
-            $upload = Upload::create([
-                'user_id' => auth()->id(),
-                'original_filename' => basename($filePath),
-                'stored_filename' => $filePath,
-                'status' => 'queued'
-            ]);
-
-            ProcessPdfJob::dispatch($upload->id);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'تم رفع الملف بالكامل بنجاح',
-                'upload_id' => $upload->id
-            ]);
-
-        } catch (\Exception $e) {
-            Log::error('Merge chunks failed', ['error' => $e->getMessage()]);
-            return response()->json(['success' => false, 'error' => $e->getMessage()], 500);
-        }
-    }
-
-    /**
-     * إلغاء عملية الرفع
-     */
-    public function abortUpload(Request $request)
-    {
-        $request->validate([
-            'uploadId' => 'required|string'
-        ]);
-
-        try {
-            // حذف المجلد المؤقت وجميع الأجزاء
-            Storage::disk('local')->deleteDirectory("uploads/temp/{$request->uploadId}");
-            return response()->json(['success' => true, 'message' => 'تم إلغاء الرفع']);
-        } catch (\Exception $e) {
-            return response()->json(['success' => false, 'error' => $e->getMessage()], 500);
-        }
-    }
-
-    public function checkStatus($id)
-    {
-        $upload = Upload::find($id);
-        if (!$upload) return response()->json(['success' => false, 'error' => 'Upload not found'], 404);
-
-        return response()->json([
-            'success' => true,
-            'status' => $upload->status,
-            'message' => $upload->error_message,
-            'groups_count' => $upload->groups()->count(),
-            'total_pages' => $upload->total_pages
-        ]);
-    }
-
-    public function showFile($uploadId)
-    {
-        $upload = Upload::find($uploadId);
-        if (!$upload) abort(404);
-
-        $filePath = $upload->stored_filename;
-
-        if (!Storage::disk('public')->exists($filePath)) {
-            abort(404);
-        }
-
-        return response()->file(Storage::disk('public')->path($filePath));
+        return Storage::disk($disk)->response($path);
     }
 
     public function downloadAllGroupsZip(Upload $upload)
     {
-        $zipFileName = 'upload_' . $upload->id . '_groups.zip';
-        $zipPath = storage_path('app/temp/' . $zipFileName);
-
-        if (!file_exists(dirname($zipPath))) {
-            mkdir(dirname($zipPath), 0755, true);
+        if ($upload->status !== 'completed' || $upload->groups->isEmpty()) {
+            return redirect()->back()->with('error', 'لا يمكن تحميل ملف ZIP. الملف غير مكتمل المعالجة أو لا يحتوي على مجموعات.');
         }
 
-        $zip = new ZipArchive();
-        if ($zip->open($zipPath, ZipArchive::CREATE | ZipArchive::OVERWRITE) === TRUE) {
+        $zip = new ZipArchive;
+        $zipFileName = 'groups_for_' . $upload->original_filename . '.zip';
+        $tempPath = storage_path('app/temp/' . $zipFileName);
+
+        if (!File::isDirectory(storage_path('app/temp'))) {
+            File::makeDirectory(storage_path('app/temp'), 0755, true);
+        }
+
+        if ($zip->open($tempPath, ZipArchive::CREATE | ZipArchive::OVERWRITE) === TRUE) {
+            $errors = [];
+
             foreach ($upload->groups as $group) {
-                if (Storage::disk('public')->exists($group->pdf_path)) {
-                    $fileContent = Storage::disk('public')->get($group->pdf_path);
-                    $zip->addFromString(basename($group->pdf_path), $fileContent);
+                if ($group->pdf_path && Storage::exists($group->pdf_path)) {
+                    $fileContents = Storage::get($group->pdf_path);
+                    $zip->addFromString(basename($group->pdf_path), $fileContents);
+                } else {
+                    $errors[] = $group->code;
                 }
             }
+
             $zip->close();
+
+            if (!empty($errors)) {
+                Log::warning('Some group files were missing during ZIP creation.', ['upload_id' => $upload->id, 'missing_groups' => $errors]);
+            }
+
+            if (File::exists($tempPath)) {
+                $response = response()->download($tempPath, $zipFileName)->deleteFileAfterSend(true);
+                return $response;
+            }
         }
 
-        return response()->download($zipPath)->deleteFileAfterSend(true);
+        return redirect()->back()->with('error', 'حدث خطأ أثناء إنشاء ملف ZIP.');
     }
 
     /**
-     * رفع مباشر للملفات الصغيرة (بدون تقسيم)
+     * رفع متعدد للملفات مع معالجة فورية في الخلفية
      */
-    public function directUpload(Request $request)
+    public function store(Request $request)
     {
-        $request->validate([
-            'files.*' => 'required|file|max:102400', // 100MB كحد أقصى
+        // زيادة الحدود للتعامل مع ملفات كبيرة
+        ini_set('upload_max_filesize', '500M');
+        ini_set('post_max_size', '500M');
+        ini_set('max_execution_time', 0); // لا نهائي للخلفية
+        ini_set('max_input_time', 0);
+        ini_set('memory_limit', '2048M');
+
+        Log::info('Multi-file upload request received', [
+            'file_count' => $request->hasFile('pdf_files') ? count($request->file('pdf_files')) : 0,
         ]);
 
-        $uploadedFiles = [];
-
-        foreach ($request->file('files') as $file) {
-            $originalName = $file->getClientOriginalName();
-            $fileName = time() . '_' . Str::random(10) . '_' . $originalName;
-            $filePath = "uploads/" . auth()->id() . "/" . $fileName;
-
-            // حفظ الملف
-            Storage::disk('public')->put($filePath, file_get_contents($file->getRealPath()));
-
-            // حفظ في قاعدة البيانات
-            $upload = Upload::create([
-                'user_id' => auth()->id(),
-                'original_filename' => $originalName,
-                'stored_filename' => $filePath,
-                'status' => 'queued',
-                'file_size' => $file->getSize(),
+        try {
+            $request->validate([
+                'pdf_files' => 'required|array',
+                'pdf_files.*' => 'required|mimes:pdf|max:512000' // 500MB لكل ملف
             ]);
 
-            $uploadedFiles[] = $upload;
+            $files = $request->file('pdf_files');
+            $uploadIds = [];
+            $totalSizeMB = 0;
 
-            // معالجة الـ PDF
-            ProcessPdfJob::dispatch($upload->id);
+            DB::beginTransaction();
+
+            foreach ($files as $file) {
+                $fileSizeMB = round($file->getSize() / 1024 / 1024, 2);
+                $totalSizeMB += $fileSizeMB;
+
+                // تخزين الملف
+                $storedName = $file->store('uploads', 'private');
+
+                $upload = Upload::create([
+                    'original_filename' => $file->getClientOriginalName(),
+                    'stored_filename' => $storedName,
+                    'file_size' => $file->getSize(),
+                    'total_pages' => 0,
+                    'status' => 'queued',
+                    'user_id' => auth()->id(),
+                ]);
+
+                $uploadIds[] = $upload->id;
+
+                // بدء المعالجة في الخلفية مباشرة
+                $this->startBackgroundProcessing($upload->id);
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => "تم رفع " . count($files) . " ملف بنجاح ({$totalSizeMB} MB). جاري المعالجة في الخلفية...",
+                'upload_ids' => $uploadIds,
+                'file_count' => count($files),
+                'total_size_mb' => $totalSizeMB
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Multi-file upload failed', [
+                'error_message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'error' => 'فشل في رفع الملفات: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * بدء المعالجة في الخلفية - الحل السحري للسرعة
+     */
+    private function startBackgroundProcessing($uploadId)
+    {
+        // الطريقة 1: استخدام exec لبدء عملية منفصلة (الأسرع)
+        if (function_exists('exec') && strtoupper(substr(PHP_OS, 0, 3)) !== 'WIN') {
+            $artisanPath = base_path('artisan');
+            $command = "nohup php {$artisanPath} process:upload {$uploadId} > /dev/null 2>&1 & echo $!";
+            exec($command, $output);
+            Log::info('Background processing started via exec', ['upload_id' => $uploadId, 'output' => $output]);
+        }
+        // الطريقة 3: معالجة فورية (للبيئات البسيطة)
+        else {
+            $this->processUploadImmediate($uploadId);
+        }
+    }
+
+    /**
+     * معالجة فورية للبيئات التي لا تدعم الخلفية
+     */
+    private function processUploadImmediate($uploadId)
+    {
+        try {
+            ignore_user_abort(true); // الاستمرار حتى لو أغلق المستخدم الصفحة
+            set_time_limit(0); // لا يوجد حد زمني
+
+            $upload = Upload::find($uploadId);
+            if (!$upload) return;
+
+            $upload->update(['status' => 'processing']);
+
+            $fullPath = Storage::disk('private')->path($upload->stored_filename);
+
+            // معالجة الملف
+            $pageCount = $this->barcodeService->getPdfPageCount($fullPath);
+            $upload->update(['total_pages' => $pageCount]);
+
+            $groups = $this->barcodeService->processPdf($upload, 'private');
+
+            $upload->update([
+                'status' => 'completed',
+                'processed_at' => now()
+            ]);
+
+            Log::info('Immediate processing completed', [
+                'upload_id' => $uploadId,
+                'groups_count' => count($groups)
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Immediate processing failed', [
+                'upload_id' => $uploadId,
+                'error' => $e->getMessage()
+            ]);
+
+            if (isset($upload)) {
+                $upload->update([
+                    'status' => 'failed',
+                    'error_message' => $e->getMessage()
+                ]);
+            }
+        }
+    }
+
+    /**
+     * معالجة ملف واحد
+     */
+    public function process($uploadId)
+    {
+        try {
+            $upload = Upload::findOrFail($uploadId);
+
+            if (!in_array($upload->status, ['queued', 'processing'])) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'الملف ليس في حالة معالجة. الحالة الحالية: ' . $upload->status
+                ]);
+            }
+
+            $upload->update(['status' => 'processing']);
+
+            $fullPath = Storage::disk('private')->path($upload->stored_filename);
+
+            // الحصول على عدد الصفحات
+            $pageCount = $this->barcodeService->getPdfPageCount($fullPath);
+            $upload->update(['total_pages' => $pageCount]);
+
+            // معالجة PDF
+            $groups = $this->barcodeService->processPdf($upload, 'private');
+
+            $upload->update([
+                'status' => 'completed',
+                'error_message' => null,
+                'processed_at' => now()
+            ]);
+
+            Log::info('Processing completed successfully', [
+                'upload_id' => $upload->id,
+                'groups_count' => count($groups)
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => "تمت معالجة الملف بنجاح. تم إنشاء " . count($groups) . " قسم.",
+                'groups_count' => count($groups),
+                'total_pages' => $pageCount
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Processing failed', [
+                'upload_id' => $uploadId,
+                'error_message' => $e->getMessage()
+            ]);
+
+            if (isset($upload)) {
+                $upload->update([
+                    'status' => 'failed',
+                    'error_message' => $e->getMessage()
+                ]);
+            }
+
+            return response()->json([
+                'success' => false,
+                'error' => 'فشل في المعالجة: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * التحقق من حالة عدة ملفات
+     */
+    public function checkMultiStatus(Request $request)
+    {
+        $uploadIds = $request->input('upload_ids', []);
+
+        if (empty($uploadIds)) {
+            return response()->json([
+                'success' => false,
+                'error' => 'لم يتم توفير معرّفات الملفات'
+            ]);
+        }
+
+        $uploads = Upload::whereIn('id', $uploadIds)->get();
+
+        $statuses = [];
+        $allCompleted = true;
+        $anyFailed = false;
+        $totalGroups = 0;
+        $totalPages = 0;
+        $completedCount = 0;
+
+        foreach ($uploads as $upload) {
+            $statuses[] = [
+                'id' => $upload->id,
+                'filename' => $upload->original_filename,
+                'status' => $upload->status,
+                'message' => $this->getStatusMessage($upload->status),
+                'groups_count' => $upload->groups()->count(),
+                'total_pages' => $upload->total_pages,
+                'file_size' => $upload->file_size,
+                'created_at' => $upload->created_at->format('Y-m-d H:i:s')
+            ];
+
+            if ($upload->status !== 'completed') {
+                $allCompleted = false;
+            } else {
+                $completedCount++;
+            }
+
+            if ($upload->status === 'failed') {
+                $anyFailed = true;
+            }
+
+            $totalGroups += $upload->groups()->count();
+            $totalPages += $upload->total_pages;
         }
 
         return response()->json([
             'success' => true,
-            'message' => 'تم رفع الملفات بنجاح',
-            'files' => $uploadedFiles
+            'statuses' => $statuses,
+            'all_completed' => $allCompleted,
+            'any_failed' => $anyFailed,
+            'total_groups' => $totalGroups,
+            'total_pages' => $totalPages,
+            'processed_files' => $completedCount,
+            'total_files' => count($uploadIds),
+            'progress_percentage' => round(($completedCount / count($uploadIds)) * 100)
+        ]);
+    }
+
+    /**
+     * تحميل جميع الملفات المعالجة في ZIP واحد
+     */
+    public function downloadMultiZip(Request $request)
+    {
+        $uploadIds = $request->input('upload_ids', []);
+
+        if (empty($uploadIds)) {
+            return redirect()->back()->with('error', 'لم يتم توفير معرّفات الملفات');
+        }
+
+        $uploads = Upload::with('groups')->whereIn('id', $uploadIds)->get();
+
+        $zip = new ZipArchive;
+        $zipFileName = 'multiple_uploads_' . time() . '.zip';
+        $tempPath = storage_path('app/temp/' . $zipFileName);
+
+        if (!File::isDirectory(storage_path('app/temp'))) {
+            File::makeDirectory(storage_path('app/temp'), 0755, true);
+        }
+
+        if ($zip->open($tempPath, ZipArchive::CREATE | ZipArchive::OVERWRITE) === TRUE) {
+            $errors = [];
+
+            foreach ($uploads as $upload) {
+                if ($upload->status === 'completed' && $upload->groups->isNotEmpty()) {
+                    $folderName = Str::slug(pathinfo($upload->original_filename, PATHINFO_FILENAME));
+
+                    foreach ($upload->groups as $group) {
+                        if ($group->pdf_path && Storage::exists($group->pdf_path)) {
+                            $fileContents = Storage::get($group->pdf_path);
+                            $fileName = $folderName . '/' . basename($group->pdf_path);
+                            $zip->addFromString($fileName, $fileContents);
+                        } else {
+                            $errors[] = "المجموعة {$group->code} من الملف {$upload->original_filename}";
+                        }
+                    }
+                }
+            }
+
+            $zip->close();
+
+            if (!empty($errors)) {
+                Log::warning('Some group files were missing during multi-ZIP creation', [
+                    'missing_groups' => $errors
+                ]);
+            }
+
+            if (File::exists($tempPath)) {
+                return response()->download($tempPath, $zipFileName)->deleteFileAfterSend(true);
+            }
+        }
+
+        return redirect()->back()->with('error', 'حدث خطأ أثناء إنشاء ملف ZIP.');
+    }
+
+    public function checkStatus($uploadId)
+    {
+        $upload = Upload::find($uploadId);
+
+        if (!$upload) {
+            return response()->json([
+                'success' => false,
+                'error' => 'الرفع غير موجود'
+            ]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'status' => $upload->status,
+            'message' => $this->getStatusMessage($upload->status),
+            'groups_count' => $upload->groups()->count(),
+            'total_pages' => $upload->total_pages,
+            'filename' => $upload->original_filename
+        ]);
+    }
+
+    private function getStatusMessage($status)
+    {
+        $messages = [
+            'processing' => 'جاري معالجة الملف...',
+            'completed' => 'تمت المعالجة بنجاح',
+            'failed' => 'فشلت المعالجة',
+            'queued' => 'في قائمة الانتظار'
+        ];
+
+        return $messages[$status] ?? 'حالة غير معروفة';
+    }
+
+    public function destroy(Upload $upload)
+    {
+        if ($upload->stored_filename) {
+            Storage::disk('private')->delete($upload->stored_filename);
+        }
+
+        $upload->groups()->each(function($group) {
+            if ($group->pdf_path && Storage::exists($group->pdf_path)) {
+                Storage::delete($group->pdf_path);
+            }
+            $group->delete();
+        });
+
+        $upload->delete();
+
+        return response()->json([
+            'success' => true
         ]);
     }
 }
