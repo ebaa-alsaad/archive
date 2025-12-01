@@ -16,28 +16,29 @@ Route::middleware(['auth'])->group(function () {
 
     // Dashboard
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
-    // ----------------------
+// ----------------------
     // Upload Routes
     // ----------------------
-
     Route::prefix('uploads')->name('uploads.')->controller(UploadController::class)->group(function () {
-        Route::post('/', 'store')->name('store');
-        Route::post('/download-results', 'downloadResults')->name('download.results');
-
         Route::get('/', 'index')->name('index');
         Route::get('/create', 'create')->name('create');
+        Route::post('/', 'store')->name('store');
         Route::get('/{upload}', 'show')->name('show');
+        Route::get('/{upload}/edit', 'edit')->name('edit');
+        Route::patch('/{upload}', 'update')->name('update');
         Route::delete('/{upload}', 'destroy')->name('destroy');
 
-        // routes للتتبع
+        // Custom routes
         Route::get('/{upload}/status', 'checkStatus')->name('status');
-        Route::post('/status/multi', 'checkMultiStatus')->name('status.multi');
         Route::get('/uploaded-file/{upload}', 'showFile')->name('show_file');
-        Route::get('/{upload}/download-all', 'downloadAllGroupsZip')->name('download_all_groups');
-        Route::post('/download/multi', 'downloadMultiZip')->name('download.multi');
+        Route::get('/{upload}/download-all',  'downloadAllGroupsZip')->name('download_all_groups');
+        Route::post('/{upload}/process','process')->name('process');
+        Route::post('/chunk', 'uploadChunk')->name('chunk');
+        Route::post('/init', 'initUpload')->name('init');
 
-        Route::get('/system/status', 'getSystemStatus')->name('system.status');
+
     });
+
      // ----------------------
     // Group Routes
     // ----------------------
