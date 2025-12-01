@@ -453,272 +453,7 @@ class BarcodeOCRService
     }
 
     /**
-     * تحليل نص المستند للعثور على البيانات المهمة
-     */
-    private function parseDocumentText($text)
-    {
-        $data = [
-            'type' => 'unknown',
-            'number' => null,
-            'date' => null
-        ];
-
-        // البحث عن رقم القيد
-        if (preg_match('/(رقم القيد|رقم_القيد|القيد)[:\s]*([A-Za-z0-9]+)/i', $text, $matches)) {
-            $data['type'] = 'قيد';
-            $data['number'] = $matches[2];
-        }
-        // البحث عن رقم السند
-        elseif (preg_match('/(رقم السند|رقم_السند|السند)[:\s]*([A-Za-z0-9]+)/i', $text, $matches)) {
-            $data['type'] = 'سند';
-            $data['number'] = $matches[2];
-        }
-        // البحث عن رقم الفاتورة
-        elseif (preg_match('/(رقم الفاتورة|رقم_الفاتورة|الفاتورة|فاتورة)[:\s]*([A-Za-z0-9]+)/i', $text, $matches)) {
-            $data['type'] = 'فاتورة';
-            $data['number'] = $matches[2];
-        }
-        // البحث عن التواريخ
-        elseif (preg_match('/(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/', $text, $matches)) {
-            $data['date'] = $matches[1];
-        }
-
-        return $data;
-    }
-
-    /**
-     * إنشاء اسم ملف بناءً على بيانات المستند
-     */
-    private function generateDocumentFilename($documentData, $sectionIndex)
-    {
-        $filenameParts = [];
-
-        // إضافة نوع المستند
-        if ($documentData['type'] !== 'unknown') {
-            $filenameParts[] = $documentData['type'];
-        }
-
-        // إضافة رقم المستند
-        if ($documentData['number']) {
-            $filenameParts[] = $documentData['number'];
-        }
-
-        // إضافة التاريخ
-        if ($documentData['date']) {
-            $cleanDate = preg_replace('/[\/\-]/', '_', $documentData['date']);
-            $filenameParts[] = $cleanDate;
-        }
-
-        // إذا لم توجد بيانات كافية، استخدام الفهرس والباركود
-        if (empty($filenameParts)) {
-            $filenameParts[] = 'document';
-            $filenameParts[] = $sectionIndex + 1;
-            if ($documentData['barcode']) {
-                $filenameParts[] = substr($documentData['barcode'], 0, 8);
-            }
-        }
-
-        $filename = implode('_', $filenameParts) . '_' . time();
-
-        // تنظيف اسم الملف
-        $filename = preg_replace('/[^A-Za-z0-9_\-]/', '', $filename);
-        $filename = substr($filename, 0, 50); // حد أقصى لطول الاسم
-
-        Log::debug("Generated document filename", [
-            'document_data' => $documentData,
-            'filename_parts' => $filenameParts,
-            'final_filename' => $filename
-        ]);
-
-        return $filename;
-    }
-
-    // ... باقي الدوال المساعدة (createPdfSimple, getPdfPageCountSimple, etc.) تبقى كما هي
-
-    /**
-     * إنشاء PDF بسيط (نفس الدالة السابقة)
-     */
-    private function createPdfSimple($pdfPath, $pages, $outputPath)
-    {
-        try {
-            if (file_exists($outputPath)) {
-                unlink($outputPath);
-            }
-
-            $pagesString = implode(' ', $pages);
-
-            // استخدام pdftk إذا متوفر
-            $cmdCheck = 'which pdftk 2>&1';
-            exec($cmdCheck, $outputCheck, $returnCheck);
-
-            if ($returnCheck === 0) {
-                $cmd = sprintf(
-                    'pdftk %s cat %s output %s 2>&1',
-                    escapeshellarg($pdfPath),
-                    $pagesString,
-                    escapeshellarg($outputPath)
-                );
-            } else {
-                $pageList = implode(' ', array_map(function($page) {
-                    return "-dPageList=" . $page;
-                }, $pages));
-
-                $cmd = sprintf(
-                    'gs -q -dNOPAUSE -dBATCH -sDEVICE=pdfwrite %s -sOutputFile=%s %s 2>&1',
-                    $pageList,
-                    escapeshellarg($outputPath),
-                    escapeshellarg($pdfPath)
-                );
-            }
-
-            exec($cmd, $output, $returnVar);
-
-            $success = $returnVar === 0 && file_exists($outputPath) && filesize($outputPath) > 1000;
-
-            if (!$success && $returnCheck !== 0) {
-                $success = $this->fallbackPdfCreation($pdfPath, $pages, $outputPath);
-            }
-
-            return $success;
-
-        } catch (Exception $e) {
-            Log::error("PDF creation failed", [
-                'error' => $e->getMessage(),
-                'pages_count' => count($pages)
-            ]);
-            return false;
-        }
-    }
-
-    /**
-     * عد الصفحات (نفس الدالة السابقة)
-     */
-    private function getPdfPageCountSimple($pdfPath)
-    {
-        $cmd = 'pdfinfo ' . escapeshellarg($pdfPath) . ' 2>&1';
-        exec($cmd, $output, $returnVar);
-
-        if ($returnVar === 0) {
-            foreach ($output as $line) {
-                if (preg_match('/Pages:\s*(\d+)/i', $line, $matches)) {
-                    return (int)$matches[1];
-                }
-            }
-        }
-
-        $cmd = 'qpdf --show-npages ' . escapeshellarg($pdfPath) . ' 2>&1';
-        exec($cmd, $output, $returnVar);
-
-        if ($returnVar === 0 && isset($output[0]) && is_numeric($output[0])) {
-            return (int)$output[0];
-        }
-
-        return 10;
-    }
-
-        /**
-     * طريقة بديلة لإنشاء PDF
-     */
-    private function fallbackPdfCreation($pdfPath, $pages, $outputPath)
-    {
-        try {
-            Log::debug("Trying fallback PDF creation method");
-
-            // استخدام python و PyPDF2 كبديل أخير
-            $pagesList = implode(',', array_map(function($page) {
-                return strval($page - 1); // PyPDF2 يبدأ من 0
-            }, $pages));
-
-            $pythonScript = "
-import PyPDF2
-import sys
-
-input_path = '{$pdfPath}'
-output_path = '{$outputPath}'
-pages = [{$pagesList}]
-
-try:
-    with open(input_path, 'rb') as input_file:
-        reader = PyPDF2.PdfReader(input_file)
-        writer = PyPDF2.PdfWriter()
-
-        for page_num in pages:
-            if page_num < len(reader.pages):
-                writer.add_page(reader.pages[page_num])
-
-        with open(output_path, 'wb') as output_file:
-            writer.write(output_file)
-    print('success')
-except Exception as e:
-    print(str(e))
-    sys.exit(1)
-";
-
-            $tempScriptPath = tempnam(sys_get_temp_dir(), 'pdf_merge_') . '.py';
-            file_put_contents($tempScriptPath, $pythonScript);
-
-            $cmd = "python3 " . escapeshellarg($tempScriptPath) . " 2>&1";
-            exec($cmd, $output, $returnVar);
-
-            // تنظيف الملف المؤقت
-            if (file_exists($tempScriptPath)) {
-                unlink($tempScriptPath);
-            }
-
-            $success = $returnVar === 0 && file_exists($outputPath) && filesize($outputPath) > 1000;
-
-            if ($success) {
-                Log::debug("Fallback PDF creation succeeded");
-            } else {
-                Log::warning("Fallback PDF creation also failed", [
-                    'returnVar' => $returnVar,
-                    'output' => implode(', ', $output)
-                ]);
-            }
-
-            return $success;
-
-        } catch (Exception $e) {
-            Log::error("Fallback PDF creation failed", [
-                'error' => $e->getMessage()
-            ]);
-            return false;
-        }
-    }
-
-    /**
-     * طريقة طوارئ لاستخراج النص باستخدام tesseract OCR
-     */
-    private function extractTextWithOCR($imagePath)
-    {
-        try {
-            if (!file_exists($imagePath)) {
-                return null;
-            }
-
-            $cmd = sprintf(
-                'tesseract %s stdout -l ara+eng --psm 6 2>&1',
-                escapeshellarg($imagePath)
-            );
-
-            exec($cmd, $output, $returnVar);
-
-            if ($returnVar === 0 && !empty($output)) {
-                return implode(' ', $output);
-            }
-
-            return null;
-
-        } catch (Exception $e) {
-            Log::debug("OCR text extraction failed", [
-                'error' => $e->getMessage()
-            ]);
-            return null;
-        }
-    }
-
-    /**
-     * تحسين تحليل نص المستند للعثور على البيانات المهمة
+     * تحليل نص المستند للعثور على البيانات المهمة - النسخة المحسنة
      */
     private function parseDocumentText($text)
     {
@@ -823,7 +558,7 @@ except Exception as e:
     }
 
     /**
-     * إنشاء اسم ملف محسن بناءً على بيانات المستند
+     * إنشاء اسم ملف بناءً على بيانات المستند
      */
     private function generateDocumentFilename($documentData, $sectionIndex)
     {
@@ -882,6 +617,188 @@ except Exception as e:
         $filename = trim($filename, '_');
 
         return $filename;
+    }
+
+    /**
+     * إنشاء PDF بسيط
+     */
+    private function createPdfSimple($pdfPath, $pages, $outputPath)
+    {
+        try {
+            if (file_exists($outputPath)) {
+                unlink($outputPath);
+            }
+
+            $pagesString = implode(' ', $pages);
+
+            // استخدام pdftk إذا متوفر
+            $cmdCheck = 'which pdftk 2>&1';
+            exec($cmdCheck, $outputCheck, $returnCheck);
+
+            if ($returnCheck === 0) {
+                $cmd = sprintf(
+                    'pdftk %s cat %s output %s 2>&1',
+                    escapeshellarg($pdfPath),
+                    $pagesString,
+                    escapeshellarg($outputPath)
+                );
+            } else {
+                $pageList = implode(' ', array_map(function($page) {
+                    return "-dPageList=" . $page;
+                }, $pages));
+
+                $cmd = sprintf(
+                    'gs -q -dNOPAUSE -dBATCH -sDEVICE=pdfwrite %s -sOutputFile=%s %s 2>&1',
+                    $pageList,
+                    escapeshellarg($outputPath),
+                    escapeshellarg($pdfPath)
+                );
+            }
+
+            exec($cmd, $output, $returnVar);
+
+            $success = $returnVar === 0 && file_exists($outputPath) && filesize($outputPath) > 1000;
+
+            if (!$success && $returnCheck !== 0) {
+                $success = $this->fallbackPdfCreation($pdfPath, $pages, $outputPath);
+            }
+
+            return $success;
+
+        } catch (Exception $e) {
+            Log::error("PDF creation failed", [
+                'error' => $e->getMessage(),
+                'pages_count' => count($pages)
+            ]);
+            return false;
+        }
+    }
+
+    /**
+     * طريقة بديلة لإنشاء PDF
+     */
+    private function fallbackPdfCreation($pdfPath, $pages, $outputPath)
+    {
+        try {
+            Log::debug("Trying fallback PDF creation method");
+
+            // استخدام python و PyPDF2 كبديل أخير
+            $pagesList = implode(',', array_map(function($page) {
+                return strval($page - 1); // PyPDF2 يبدأ من 0
+            }, $pages));
+
+            $pythonScript = "
+import PyPDF2
+import sys
+
+input_path = '{$pdfPath}'
+output_path = '{$outputPath}'
+pages = [{$pagesList}]
+
+try:
+    with open(input_path, 'rb') as input_file:
+        reader = PyPDF2.PdfReader(input_file)
+        writer = PyPDF2.PdfWriter()
+
+        for page_num in pages:
+            if page_num < len(reader.pages):
+                writer.add_page(reader.pages[page_num])
+
+        with open(output_path, 'wb') as output_file:
+            writer.write(output_file)
+    print('success')
+except Exception as e:
+    print(str(e))
+    sys.exit(1)
+";
+
+            $tempScriptPath = tempnam(sys_get_temp_dir(), 'pdf_merge_') . '.py';
+            file_put_contents($tempScriptPath, $pythonScript);
+
+            $cmd = "python3 " . escapeshellarg($tempScriptPath) . " 2>&1";
+            exec($cmd, $output, $returnVar);
+
+            // تنظيف الملف المؤقت
+            if (file_exists($tempScriptPath)) {
+                unlink($tempScriptPath);
+            }
+
+            $success = $returnVar === 0 && file_exists($outputPath) && filesize($outputPath) > 1000;
+
+            if ($success) {
+                Log::debug("Fallback PDF creation succeeded");
+            } else {
+                Log::warning("Fallback PDF creation also failed", [
+                    'returnVar' => $returnVar,
+                    'output' => implode(', ', $output)
+                ]);
+            }
+
+            return $success;
+
+        } catch (Exception $e) {
+            Log::error("Fallback PDF creation failed", [
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    /**
+     * عد الصفحات
+     */
+    private function getPdfPageCountSimple($pdfPath)
+    {
+        $cmd = 'pdfinfo ' . escapeshellarg($pdfPath) . ' 2>&1';
+        exec($cmd, $output, $returnVar);
+
+        if ($returnVar === 0) {
+            foreach ($output as $line) {
+                if (preg_match('/Pages:\s*(\d+)/i', $line, $matches)) {
+                    return (int)$matches[1];
+                }
+            }
+        }
+
+        $cmd = 'qpdf --show-npages ' . escapeshellarg($pdfPath) . ' 2>&1';
+        exec($cmd, $output, $returnVar);
+
+        if ($returnVar === 0 && isset($output[0]) && is_numeric($output[0])) {
+            return (int)$output[0];
+        }
+
+        return 10;
+    }
+
+    /**
+     * طريقة طوارئ لاستخراج النص باستخدام tesseract OCR
+     */
+    private function extractTextWithOCR($imagePath)
+    {
+        try {
+            if (!file_exists($imagePath)) {
+                return null;
+            }
+
+            $cmd = sprintf(
+                'tesseract %s stdout -l ara+eng --psm 6 2>&1',
+                escapeshellarg($imagePath)
+            );
+
+            exec($cmd, $output, $returnVar);
+
+            if ($returnVar === 0 && !empty($output)) {
+                return implode(' ', $output);
+            }
+
+            return null;
+
+        } catch (Exception $e) {
+            Log::debug("OCR text extraction failed", [
+                'error' => $e->getMessage()
+            ]);
+            return null;
+        }
     }
 
     /**
@@ -1070,4 +987,101 @@ except Exception as e:
         ];
     }
 
+    /**
+     * إنشاء مجموعات بسيطة (دعم للطريقة البسيطة)
+     */
+    private function createGroupsSimple($sections, $pdfPath, $upload)
+    {
+        $createdGroups = [];
+        $totalGroupsCreated = 0;
+        $totalGroupsFailed = 0;
+
+        Log::info("🛠️ Starting simple group creation", [
+            'upload_id' => $upload->id,
+            'total_sections' => count($sections)
+        ]);
+
+        foreach ($sections as $index => $pages) {
+            try {
+                $filename = $this->generateSimpleFilename($upload->original_filename, $index, $pages);
+                $filenameSafe = $filename . '.pdf';
+
+                $directory = "groups";
+                $fullDir = storage_path("app/private/{$directory}");
+
+                if (!file_exists($fullDir)) {
+                    if (!mkdir($fullDir, 0775, true)) {
+                        throw new Exception("Failed to create directory: {$fullDir}");
+                    }
+                }
+
+                $outputPath = "{$fullDir}/{$filenameSafe}";
+                $dbPath = "{$directory}/{$filenameSafe}";
+
+                if ($this->createPdfSimple($pdfPath, $pages, $outputPath)) {
+                    $group = Group::create([
+                        'code' => 'section_' . ($index + 1),
+                        'pdf_path' => $dbPath,
+                        'pages_count' => count($pages),
+                        'user_id' => $upload->user_id,
+                        'upload_id' => $upload->id,
+                        'created_at' => now(),
+                        'updated_at' => now()
+                    ]);
+
+                    $createdGroups[] = $group;
+                    $totalGroupsCreated++;
+
+                    Log::info("✅ Simple group created successfully", [
+                        'group_id' => $group->id,
+                        'upload_id' => $upload->id,
+                        'pages_count' => count($pages),
+                        'filename' => $filenameSafe
+                    ]);
+                } else {
+                    $totalGroupsFailed++;
+                }
+
+            } catch (Exception $e) {
+                $totalGroupsFailed++;
+                Log::error("❌ Simple group creation failed", [
+                    'section_index' => $index,
+                    'error' => $e->getMessage()
+                ]);
+            }
+        }
+
+        return $createdGroups;
+    }
+
+    /**
+     * إنشاء اسم ملف بسيط (دعم للطريقة البسيطة)
+     */
+    private function generateSimpleFilename($originalFilename, $index, $pages)
+    {
+        $safeName = preg_replace('/[^a-zA-Z0-9_-]/', '_', pathinfo($originalFilename, PATHINFO_FILENAME));
+        $safeName = substr($safeName, 0, 20);
+
+        $pageRange = count($pages) > 1 ?
+            'pages_' . min($pages) . '_' . max($pages) :
+            'page_' . $pages[0];
+
+        return $safeName . '_' . ($index + 1) . '_' . $pageRange . '_' . time();
+    }
+
+    /**
+     * تقسيم بسيط (دعم للطريقة البسيطة)
+     */
+    private function simpleSplit($pageCount)
+    {
+        $sections = [];
+        $pagesPerSection = 10;
+
+        for ($i = 0; $i < $pageCount; $i += $pagesPerSection) {
+            $section = range($i + 1, min($i + $pagesPerSection, $pageCount));
+            $sections[] = $section;
+        }
+
+        return $sections;
+    }
 }
