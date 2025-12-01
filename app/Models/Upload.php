@@ -13,9 +13,7 @@ class Upload extends Model
         'user_id',
         'original_filename',
         'stored_filename',
-        's3_etag',
         'status',
-        'error_message',
         'total_pages'
     ];
 
