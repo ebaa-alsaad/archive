@@ -12,10 +12,6 @@
             قائمة الملفات المرفوعة
         </h2>
 
-        <a href="{{ route('uploads.create') }}"
-           class="bg-gradient-to-r from-blue-600 to-blue-500 text-white px-6 py-3 rounded-xl font-bold hover:from-blue-700 hover:to-blue-600 transition-all flex items-center">
-            <i class="fa-solid fa-plus ml-2"></i> رفع ملفات جديدة
-        </a>
     </div>
 
     <!-- Toast -->
@@ -116,7 +112,10 @@
 
                         <!-- الحالة -->
                         <td class="py-4 px-4 text-center">
-                            {{ $upload->status }}
+                            @if($upload?->status == 'completed')
+                             <span class="text-green-600 flex items-center bg-green-50 p-1 rounded-md min-w-[70px] justify-center mx-auto"> <i class="fa-solid fa-check-circle text-xs ml-1"></i> مكتملة </span>
+                              @elseif($upload?->status == 'processing') <span class="text-yellow-600 flex items-center animate-pulse bg-yellow-50 p-1 rounded-md min-w-[70px] justify-center mx-auto"> <i class="fa-solid fa-spinner fa-spin text-xs ml-1"></i> جارٍ </span>
+                              @else <span class="text-red-600 flex items-center bg-red-50 p-1 rounded-md min-w-[70px] justify-center mx-auto"> <i class="fa-solid fa-times-circle text-xs ml-1"></i> فشل </span> @endif
                         </td>
 
                         <!-- الإجراءات -->
@@ -158,16 +157,27 @@
         <!-- حذف متعدد -->
         @if($uploads->count())
         <div id="multi-delete-section" class="flex justify-between items-center mt-6">
-            <div class="text-gray-600">
-                <span id="selected-count">0</span> ملف/ملفات محددة
-            </div>
+    <div class="text-gray-600">
+        <span id="selected-count">0</span> ملف/ملفات محددة
+    </div>
 
-            <button id="multi-delete-btn"
-                class="px-6 py-2.5 bg-red-600 text-white rounded-xl hover:bg-red-700 disabled:opacity-50"
-                disabled>
-                <i class="fa-solid fa-trash ml-2"></i> حذف المحدد
-            </button>
-        </div>
+    <div class="flex gap-3 rtl:space-x-reverse">
+        <!-- زر تحميل ZIP -->
+        <button id="download-zip-btn"
+            class="px-6 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-50"
+            disabled>
+            <i class="fa-solid fa-file-zipper ml-2"></i> تحميل ZIP
+        </button>
+
+        <!-- زر حذف المحدد -->
+        <button id="multi-delete-btn"
+            class="px-6 py-2.5 bg-red-600 text-white rounded-xl hover:bg-red-700 disabled:opacity-50"
+            disabled>
+            <i class="fa-solid fa-trash ml-2"></i> حذف المحدد
+        </button>
+    </div>
+</div>
+
         @endif
 
     </div>
