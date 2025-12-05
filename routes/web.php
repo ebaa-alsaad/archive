@@ -1,5 +1,6 @@
 <?php
 
+use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\GroupController;
 use App\Http\Controllers\UploadController;
@@ -54,6 +55,12 @@ Route::middleware(['auth'])->group(function () {
         // Custom routes
         Route::get('/{group}/download', 'download')->name('download');
         Route::get('/upload/{upload}', 'indexByUpload')->name('for_upload');
+    });
+    Route::get('/uploads/progress/{uploadId}', function($uploadId){
+        return response()->json([
+            'progress' => Redis::get("upload_progress:{$uploadId}") ?? 0,
+            'message' => Redis::get("upload_message:{$uploadId}") ?? ''
+        ]);
     });
 
 
