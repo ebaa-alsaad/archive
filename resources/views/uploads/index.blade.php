@@ -116,7 +116,7 @@
 
                         <!-- الحالة -->
                         <td class="py-4 px-4 text-center">
-                            @include('uploads.partials.status', ['status' => $upload->status])
+                            {{ $upload->status }}
                         </td>
 
                         <!-- الإجراءات -->
