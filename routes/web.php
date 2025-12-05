@@ -22,15 +22,16 @@ Route::middleware(['auth'])->group(function () {
     // ----------------------
     Route::prefix('uploads')->name('uploads.')->controller(UploadController::class)->group(function () {
 
-        Route::get('/','App\Http\Controllers\UploadController@index')->name('index');
-        Route::get('/{upload}/download-all', [UploadController::class,'downloadAllGroupsZip'])->name('download_all_groups');
-        Route::delete('/{upload}', [UploadController::class,'destroy'])->name('destroy');
+        Route::get('/', 'index')->name('index');
+        Route::get('/create', 'create')->name('create');
+        Route::get('/{upload}/download-all', 'downloadAllGroupsZip')->name('download_all_groups');
+        Route::delete('/{upload}', 'destroy')->name('destroy');
 
         // progress read endpoint
-        Route::get('/progress/{uploadId}', [UploadController::class,'progress'])->name('progress');
+        Route::get('/progress/{uploadId}', 'progress')->name('progress');
 
         // after client receives final upload location, client calls /uploads/complete
-        Route::post('/complete', [UploadController::class,'complete'])->name('complete');
+        Route::post('/complete', 'complete')->name('complete');
 
 
         // Route::get('/', 'index')->name('index');
