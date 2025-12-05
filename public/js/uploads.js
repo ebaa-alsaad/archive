@@ -1,121 +1,75 @@
+// Make sure you built/up-to-date this file (npm build) or place it directly in public/js
 document.addEventListener('DOMContentLoaded', function() {
-    const dropZone = document.getElementById('drop-zone');
-    const fileInput = document.getElementById('file-input');
-    const fileList = document.getElementById('file-list');
-    const startButton = document.getElementById('start-archiving');
+    const startBtn = document.getElementById('start-archiving');
+    const results = document.getElementById('results');
     const progressContainer = document.getElementById('progress-container');
-    const resultsSection = document.getElementById('results-section');
-    const resultsTableBody = document.getElementById('results-table-body');
-    const showUploadForm = document.getElementById('show-upload-form');
 
-    // فتح نافذة الملفات عند النقر
-    dropZone.addEventListener('click', () => fileInput.click());
+    // create Uppy
+    const Uppy = window.Uppy.Core;
+    const Dashboard = window.Uppy.Dashboard;
+    const Tus = window.Uppy.Tus;
 
-    // التعامل مع الملفات
-    fileInput.addEventListener('change', handleFiles);
-    dropZone.addEventListener('drop', (e) => {
-        e.preventDefault();
-        fileInput.files = e.dataTransfer.files;
-        handleFiles();
+    const uppy = new Uppy({
+        restrictions: {
+            maxNumberOfFiles: 10,
+            allowedFileTypes: ['application/pdf']
+        },
+        autoProceed: false
     });
-    dropZone.addEventListener('dragover', (e) => e.preventDefault());
 
-    function handleFiles() {
-        const files = fileInput.files;
-        if (files.length > 0) {
-            fileList.innerHTML = '';
-            fileList.classList.remove('hidden');
-            Array.from(files).forEach((file, index) => {
-                const li = document.createElement('li');
-                li.textContent = `${index + 1}. ${file.name} (${Math.round(file.size / 1024)} KB)`;
-                li.classList.add('text-gray-700');
-                fileList.appendChild(li);
-            });
-            startButton.disabled = false;
-        } else {
-            fileList.classList.add('hidden');
-            startButton.disabled = true;
-        }
-    }
+    uppy.use(Dashboard, {
+        inline: true,
+        target: '#drag-drop-area',
+        showProgressDetails: true,
+        proudlyDisplayPoweredByUppy: false,
+        note: 'يمكن رفع ملفات PDF فقط'
+    });
 
-    async function fetchProgress(uploadId) {
-        try {
-            const res = await fetch(`/uploads/progress/${uploadId}`);
-            if (!res.ok) return null;
-            return await res.json();
-        } catch {
-            return null;
-        }
-    }
+    // Configure tus endpoint: ensure it matches route '/tus'
+    uppy.use(Tus, {
+        endpoint: '/tus', // your tus server entrypoint
+        chunkSize: 5 * 1024 * 1024, // 5MB chunks
+        retryDelays: [0, 1000, 3000, 5000]
+    });
 
-    function updateProgressBar(progress, message) {
-        progressContainer.innerHTML = `
-            <div class="w-full bg-gray-200 rounded h-4">
-                <div class="bg-green-500 h-4 rounded" style="width:${progress}%"></div>
-            </div>
-            <p class="text-gray-700 mt-1">${message}</p>
-        `;
-    }
+    uppy.on('file-added', () => {
+        startBtn.disabled = false;
+    });
 
-    // رفع الملفات ومعالجة التقدم
-    document.getElementById('upload-form').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const formData = new FormData(e.target);
-        startButton.disabled = true;
-        startButton.textContent = "جاري الرفع...";
+    uppy.on('upload-progress', (file, progress) => {
+        progressContainer.innerHTML = `<p>${file.name} — ${Math.round(progress.bytesUploaded / 1024)} KB uploaded (${Math.round(progress.percentage)}%)</p>`;
+    });
 
-        try {
-            const response = await fetch('/uploads/create', {
+    uppy.on('complete', (result) => {
+        // result.successful -> array of uploaded files with tus upload URLs
+        const uploaded = result.successful.map(f => ({
+            original_filename: f.meta.name || f.name,
+            upload_url: f.uploadURL // this is the tus location url
+        }));
+
+        // send to server to finalize and queue processing
+        uploaded.forEach(u => {
+            fetch('/uploads/complete', {
                 method: 'POST',
-                headers: { 'X-CSRF-TOKEN': document.querySelector('input[name=_token]').value },
-                body: formData
+                headers: {
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content'),
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(u)
+            }).then(r => r.json())
+            .then(json => {
+                console.log('complete response', json);
+                results.classList.remove('hidden');
+                results.innerHTML += `<div>Uploaded: ${u.original_filename} — queued (id: ${json.upload_id ?? 'n/a'})</div>`;
+            }).catch(err => {
+                console.error('complete error', err);
+                results.classList.remove('hidden');
+                results.innerHTML += `<div class="text-red-600">Upload finalize failed for ${u.original_filename}</div>`;
             });
-
-            const data = await response.json();
-            const uploadId = data.upload_id;
-
-            // متابعة التقدم
-            const interval = setInterval(async () => {
-                const prog = await fetchProgress(uploadId);
-                if (prog) updateProgressBar(prog.progress, prog.message);
-
-                if (prog && prog.progress >= 100) {
-                    clearInterval(interval);
-                    resultsSection.classList.remove('hidden');
-
-                    // عرض النتائج
-                    if (data.results) {
-                        resultsTableBody.innerHTML = '';
-                        data.results.forEach((item, index) => {
-                            resultsTableBody.innerHTML += `
-                                <tr>
-                                    <td class="py-2 px-4 text-center">${index + 1}</td>
-                                    <td class="py-2 px-4 text-center">${item.original_name}</td>
-                                    <td class="py-2 px-4 text-center">${item.groups_count}</td>
-                                    <td class="py-2 px-4 text-center text-green-600">تم</td>
-                                    <td class="py-2 px-4 text-center">${item.processed_at}</td>
-                                    <td class="py-2 px-4 text-center"><a href="${item.download_url}" class="text-blue-600 hover:underline">تحميل</a></td>
-                                    <td class="py-2 px-4 text-center"><a href="${item.show_url}" class="text-blue-600 hover:underline">عرض</a></td>
-                                </tr>
-                            `;
-                        });
-                    }
-                }
-            }, 1000);
-
-        } catch (err) {
-            console.error(err);
-        } finally {
-            startButton.disabled = false;
-            startButton.textContent = "بدء رفع ومعالجة الملفات";
-        }
+        });
     });
 
-    showUploadForm.addEventListener('click', () => {
-        resultsSection.classList.add('hidden');
-        fileList.classList.add('hidden');
-        startButton.disabled = true;
-        fileInput.value = '';
-        progressContainer.innerHTML = '';
+    startBtn.addEventListener('click', () => {
+        uppy.upload().catch(err => console.error(err));
     });
 });

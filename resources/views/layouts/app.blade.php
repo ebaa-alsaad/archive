@@ -16,7 +16,7 @@
 
     {{-- إضافة Alpine.js لدعم القائمة المنسدلة للبروفايل --}}
     <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js" defer></script>
-
+    @yield('scripts')
 
     <style>
         .font-\[Cairo\] {
@@ -169,4 +169,5 @@
     </main>
 
 </body>
+
 </html>

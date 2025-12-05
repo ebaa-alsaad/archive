@@ -1,160 +1,137 @@
 <?php
-
 namespace App\Http\Controllers;
 
+use App\Jobs\ProcessUpload;
 use App\Models\Upload;
-use App\Models\Group;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
-use App\Services\BarcodeOCRService;
+use TusPhp\Tus\Server as TusServer;
+use TusPhp\Handler\Dispatcher;
+use TusPhp\Middleware\Cors;
+use Illuminate\Support\Str;
 use ZipArchive;
-use Illuminate\Support\Facades\File;
 
 class UploadController extends Controller
 {
-    protected $barcodeService;
-
-    public function __construct(BarcodeOCRService $barcodeService)
+    // Tus server endpoint (receives chunk uploads)
+    public function tusServer(Request $request)
     {
-        $this->barcodeService = $barcodeService;
+        // configure tus server to use storage directory storage/app/tus
+        $server = new TusServer('file'); // use file store
+        $server->setApiPath('/tus'); // doit match client
+        $server->setUploadDir(storage_path('app/tus'));
+
+        // create dispatcher to handle request
+        $response = $server->serve();
+        $response->send();
+        exit; // tus-php handles response directly
+    }
+
+    // Called by client after tus upload is complete with the tus file URI
+    public function complete(Request $request)
+    {
+        $request->validate([
+            'upload_url' => 'required|string',
+            'original_filename' => 'required|string'
+        ]);
+
+        $uploadUrl = $request->input('upload_url'); // e.g. /files/<id>
+        $original = $request->input('original_filename');
+
+        // tus-php stores files in storage/app/tus/<file id>
+        // extract id from URL (last path segment)
+        $id = basename(parse_url($uploadUrl, PHP_URL_PATH));
+
+        $tusDir = storage_path("app/tus");
+        $src = "{$tusDir}/{$id}";
+
+        if (!file_exists($src)) {
+            return response()->json(['success'=>false,'error'=>'Tus file not found on server'], 404);
+        }
+
+        // move to private storage and record Upload
+        $newName = 'uploads/' . Str::random(10) . '_' . preg_replace('/\s+/', '_', $original);
+        Storage::disk('private')->put($newName, file_get_contents($src));
+
+        $upload = Upload::create([
+            'original_filename' => $original,
+            'stored_filename' => $newName,
+            'tus_path' => $id,
+            'status' => 'queued',
+            'user_id' => auth()->id(),
+        ]);
+
+        // remove tus temp file to free space
+        @unlink($src);
+
+        // dispatch job
+        ProcessUpload::dispatch($upload->id);
+
+        return response()->json([
+            'success'=>true,
+            'upload_id'=>$upload->id,
+            'message'=>'Uploaded and queued for processing'
+        ]);
+    }
+
+    // progress endpoint (reads redis)
+    public function progress($uploadId)
+    {
+        $progress = cache()->store('redis')->get("upload_progress:{$uploadId}") ?? Redis::get("upload_progress:{$uploadId}") ?? 0;
+        $msg = cache()->store('redis')->get("upload_message:{$uploadId}") ?? Redis::get("upload_message:{$uploadId}") ?? '';
+        return response()->json(['progress'=>(int)$progress,'message'=>$msg]);
     }
 
     public function index()
     {
-        $uploads = Upload::with(['user', 'groups'])->orderByDesc('created_at')->paginate(10);
+        $uploads = Upload::orderBy('created_at','desc')->paginate(20);
         return view('uploads.index', compact('uploads'));
     }
 
-    public function create()
-    {
-        return view('uploads.create');
-    }
-
-    public function show(Upload $upload)
-    {
-        $upload->load(['groups', 'user']);
-        return view('uploads.show', compact('upload'));
-    }
-
-    public function showFile(Upload $upload)
-    {
-        $disk = 'private';
-        if (!$upload->stored_filename || !Storage::disk($disk)->exists($upload->stored_filename)) {
-            abort(404, 'الملف غير موجود.');
-        }
-
-        return Storage::disk($disk)->response($upload->stored_filename);
-    }
-
-    public function store(Request $request)
-    {
-        ini_set('memory_limit', '1024M');
-        ini_set('max_execution_time', 1200);
-
-        $request->validate([
-            'pdf_file' => 'required|mimes:pdf|max:256000'
-        ]);
-
-        try {
-            $file = $request->file('pdf_file');
-            $storedName = $file->store('uploads', 'private');
-
-            $upload = Upload::create([
-                'original_filename' => $file->getClientOriginalName(),
-                'stored_filename' => $storedName,
-                'status' => 'processing',
-                'user_id' => auth()->id(),
-            ]);
-
-            return response()->json([
-                'success' => true,
-                'message' => "تم رفع الملف بنجاح. جاري المعالجة...",
-                'upload_id' => $upload->id,
-                'status' => 'processing'
-            ]);
-
-        } catch (\Exception $e) {
-            Log::error('Upload failed', ['error' => $e->getMessage()]);
-            return response()->json(['success' => false, 'error' => $e->getMessage()], 500);
-        }
-    }
-
-    public function process($uploadId)
-    {
-        try {
-            $upload = Upload::findOrFail($uploadId);
-
-            if ($upload->status !== 'processing') {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'الملف ليس في حالة معالجة.'
-                ]);
-            }
-
-            $groups = $this->barcodeService->processPdf($upload);
-
-            $upload->update(['status' => 'completed']);
-
-            return response()->json([
-                'success' => true,
-                'message' => 'تمت معالجة الملف بنجاح.',
-                'groups_count' => count($groups),
-                'group_files' => array_map(fn($g) => $g->pdf_path, $groups)
-            ]);
-
-        } catch (\Exception $e) {
-            Log::error('Processing failed', ['upload_id' => $uploadId, 'error' => $e->getMessage()]);
-
-            if (isset($upload)) {
-                $upload->update(['status' => 'failed', 'error_message' => $e->getMessage()]);
-            }
-
-            return response()->json(['success' => false, 'error' => $e->getMessage()], 500);
-        }
-    }
-
+    // download all groups as zip
     public function downloadAllGroupsZip(Upload $upload)
     {
-        if ($upload->status !== 'completed' || $upload->groups->isEmpty()) {
-            return redirect()->back()->with('error', 'لا يمكن تحميل ملف ZIP.');
+        if ($upload->groups()->count() === 0) {
+            return redirect()->back()->with('error','لا توجد مجموعات للتحميل');
         }
-
-        $zipFileName = 'groups_for_' . $upload->original_filename . '.zip';
-        $tempPath = storage_path('app/temp/' . $zipFileName);
-
-        if (!File::isDirectory(storage_path('app/temp'))) {
-            File::makeDirectory(storage_path('app/temp'), 0755, true);
-        }
+        $zipName = 'groups_for_' . pathinfo($upload->original_filename, PATHINFO_FILENAME) . '.zip';
+        $temp = storage_path('app/temp/'.$zipName);
+        if (!file_exists(dirname($temp))) mkdir(dirname($temp), 0775, true);
 
         $zip = new ZipArchive;
-        if ($zip->open($tempPath, ZipArchive::CREATE | ZipArchive::OVERWRITE) === TRUE) {
-            foreach ($upload->groups as $group) {
-                if ($group->pdf_path && Storage::disk('private')->exists($group->pdf_path)) {
-                    $zip->addFromString(basename($group->pdf_path), Storage::disk('private')->get($group->pdf_path));
+        if ($zip->open($temp, ZipArchive::CREATE | ZipArchive::OVERWRITE) === true) {
+            foreach ($upload->groups as $g) {
+                $path = storage_path('app/private/' . $g->pdf_path);
+                if (file_exists($path)) {
+                    $zip->addFile($path, basename($g->pdf_path));
                 }
             }
             $zip->close();
+            return response()->download($temp, $zipName)->deleteFileAfterSend(true);
         }
 
-        return response()->download($tempPath, $zipFileName)->deleteFileAfterSend(true);
+        return redirect()->back()->with('error','فشل إنشاء ZIP');
     }
 
+    // delete upload (and groups)
     public function destroy(Upload $upload)
     {
-        if ($upload->stored_filename) {
+        // delete stored file
+        if ($upload->stored_filename && Storage::disk('private')->exists($upload->stored_filename)) {
             Storage::disk('private')->delete($upload->stored_filename);
         }
 
-        $upload->groups->each(function ($group) {
-            if ($group->pdf_path) {
-                Storage::disk('private')->delete($group->pdf_path);
+        // delete group files
+        foreach ($upload->groups as $g) {
+            if (Storage::disk('private')->exists($g->pdf_path)) {
+                Storage::disk('private')->delete($g->pdf_path);
             }
-            $group->delete();
-        });
+            $g->delete();
+        }
 
         $upload->delete();
 
-        return response()->json(['success' => true]);
+        return response()->json(['success'=>true]);
     }
 }

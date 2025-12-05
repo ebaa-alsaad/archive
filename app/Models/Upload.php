@@ -10,11 +10,7 @@ class Upload extends Model
     use HasFactory;
 
     protected $fillable = [
-        'user_id',
-        'original_filename',
-        'stored_filename',
-        'status',
-        'total_pages'
+        'original_filename','stored_filename','tus_path','total_pages','status','error_message','user_id'
     ];
 
      public function groups()

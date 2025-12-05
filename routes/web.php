@@ -21,24 +21,40 @@ Route::middleware(['auth'])->group(function () {
     // Upload Routes
     // ----------------------
     Route::prefix('uploads')->name('uploads.')->controller(UploadController::class)->group(function () {
-        Route::get('/', 'index')->name('index');
-        Route::get('/create', 'create')->name('create');
-        Route::post('/', 'store')->name('store');
-        Route::get('/{upload}', 'show')->name('show');
-        Route::get('/{upload}/edit', 'edit')->name('edit');
-        Route::patch('/{upload}', 'update')->name('update');
-        Route::delete('/{upload}', 'destroy')->name('destroy');
+
+        Route::get('/','App\Http\Controllers\UploadController@index')->name('index');
+        Route::get('/{upload}/download-all', [UploadController::class,'downloadAllGroupsZip'])->name('download_all_groups');
+        Route::delete('/{upload}', [UploadController::class,'destroy'])->name('destroy');
+
+        // progress read endpoint
+        Route::get('/progress/{uploadId}', [UploadController::class,'progress'])->name('progress');
+
+        // after client receives final upload location, client calls /uploads/complete
+        Route::post('/complete', [UploadController::class,'complete'])->name('complete');
+
+
+        // Route::get('/', 'index')->name('index');
+        // Route::get('/create', 'create')->name('create');
+        // Route::post('/', 'store')->name('store');
+        // Route::get('/{upload}', 'show')->name('show');
+        // Route::get('/{upload}/edit', 'edit')->name('edit');
+        // Route::patch('/{upload}', 'update')->name('update');
+        // Route::delete('/{upload}', 'destroy')->name('destroy');
 
         // Custom routes
-        Route::get('/{upload}/status', 'checkStatus')->name('status');
-        Route::get('/uploaded-file/{upload}', 'showFile')->name('show_file');
-        Route::get('/{upload}/download-all',  'downloadAllGroupsZip')->name('download_all_groups');
-        Route::post('/{upload}/process','process')->name('process');
-        Route::post('/chunk', 'uploadChunk')->name('chunk');
-        Route::post('/init', 'initUpload')->name('init');
+        // Route::get('/{upload}/status', 'checkStatus')->name('status');
+        // Route::get('/uploaded-file/{upload}', 'showFile')->name('show_file');
+        // Route::get('/{upload}/download-all',  'downloadAllGroupsZip')->name('download_all_groups');
+        // Route::post('/{upload}/process','process')->name('process');
+        // Route::post('/chunk', 'uploadChunk')->name('chunk');
+        // Route::post('/init', 'initUpload')->name('init');
 
 
     });
+
+
+    // tus integration endpoints (POST/HEAD/OPTIONS handled by tus server)
+    Route::any('/tus', [UploadController::class,'tusServer']); // this will be used by tus-php serve()
 
      // ----------------------
     // Group Routes
@@ -56,12 +72,6 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/{group}/download', 'download')->name('download');
         Route::get('/upload/{upload}', 'indexByUpload')->name('for_upload');
     });
-    Route::get('/uploads/progress/{uploadId}', function($uploadId){
-        return response()->json([
-            'progress' => Redis::get("upload_progress:{$uploadId}") ?? 0,
-            'message' => Redis::get("upload_message:{$uploadId}") ?? ''
-        ]);
-    });
 
 
      // ----------------------
@@ -75,16 +85,16 @@ Route::middleware(['auth'])->group(function () {
 });
 
 
-Route::get('/system-check', function () {
-    $checks = [
-        'deepseek_api_key' => !empty(env('DEEPSEEK_API_KEY')),
-        'storage_link' => file_exists(public_path('storage')),
-        'php_version' => PHP_VERSION,
-        'memory_limit' => ini_get('memory_limit'),
-        'max_execution_time' => ini_get('max_execution_time'),
-    ];
+// Route::get('/system-check', function () {
+//     $checks = [
+//         'deepseek_api_key' => !empty(env('DEEPSEEK_API_KEY')),
+//         'storage_link' => file_exists(public_path('storage')),
+//         'php_version' => PHP_VERSION,
+//         'memory_limit' => ini_get('memory_limit'),
+//         'max_execution_time' => ini_get('max_execution_time'),
+//     ];
 
-    return response()->json($checks);
-});
+//     return response()->json($checks);
+// });
 
 require __DIR__.'/auth.php';
