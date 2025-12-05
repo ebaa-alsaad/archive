@@ -121,11 +121,14 @@
                         <!-- الإجراءات -->
                         <td class="py-4 px-4 text-center">
                             <div class="flex justify-center space-x-3 rtl:space-x-reverse">
-
-                                <a href="{{ route('uploads.show_file', $upload->id) }}"
-                                   class="text-green-600 hover:text-green-800 text-lg">
-                                    <i class="fa-solid fa-eye"></i>
+                            {{-- تحميل ZIP لجميع المجموعات --}}
+                            @if($upload->groups->count() > 0 && $upload->groups->every(fn($group) => $group->pdf_path != null))
+                                <a href="{{ route('uploads.download_all_groups', $upload->id) }}"
+                                class="text-yellow-600 hover:text-yellow-800 text-lg"
+                                title="تحميل جميع المجموعات ZIP">
+                                    <i class="fa-solid fa-file-zipper"></i>
                                 </a>
+                            @endif
 
                                 <a href="{{ route('uploads.show', $upload->id) }}"
                                    class="text-blue-600 hover:text-blue-800 text-lg">
@@ -162,12 +165,6 @@
     </div>
 
     <div class="flex gap-3 rtl:space-x-reverse">
-        <!-- زر تحميل ZIP -->
-        <button id="download-zip-btn"
-            class="px-6 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-50"
-            disabled>
-            <i class="fa-solid fa-file-zipper ml-2"></i> تحميل ZIP
-        </button>
 
         <!-- زر حذف المحدد -->
         <button id="multi-delete-btn"
