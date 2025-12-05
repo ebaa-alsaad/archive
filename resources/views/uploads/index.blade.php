@@ -7,7 +7,7 @@
         <h2 class="text-3xl font-bold text-gray-800 flex items-center">
             <i class="fa-solid fa-folder-tree ml-2 text-blue-600"></i> المجموعات الناتجة
         </h2>
-        <a href="{{ route('processing:upload_create') }}"
+        <a href="{{ route('uploads.create') }}"
            class="bg-gradient-to-r from-blue-600 to-blue-500 text-white px-6 py-3 rounded-xl font-bold hover:from-blue-700 hover:to-blue-600 transition-all flex items-center">
             <i class="fa-solid fa-plus ml-2"></i> رفع ملفات جديدة
         </a>
@@ -159,7 +159,7 @@
                                 <i class="fa-solid fa-inbox text-5xl mb-4 text-gray-300"></i>
                                 <p class="text-lg font-medium text-gray-400 mb-2">لا توجد ملفات مرفوعة حالياً</p>
                                 <p class="text-sm text-gray-400">قم برفع ملفات PDF لمعالجتها وتقسيمها إلى مجموعات</p>
-                                <a href="{{ route('processing:upload_create') }}"
+                                <a href="{{ route('uploads.create') }}"
                                    class="mt-4 bg-gradient-to-r from-blue-600 to-blue-500 text-white px-6 py-2 rounded-lg font-medium hover:from-blue-700 hover:to-blue-600 transition-all">
                                     <i class="fa-solid fa-plus ml-2"></i> رفع أول ملف
                                 </a>
