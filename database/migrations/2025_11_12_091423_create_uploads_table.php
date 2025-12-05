@@ -15,11 +15,9 @@ return new class extends Migration
             $table->id();
             $table->string('original_filename');
             $table->string('stored_filename');
-            $table->string('tus_path')->nullable();
             $table->integer('total_pages')->default(0);
-            $table->enum('status', ['queued','processing','completed','failed'])->default('queued');
-            $table->text('error_message')->nullable();
-            $table->unsignedBigInteger('user_id')->nullable();
+            $table->enum('status', ['pending','uploading',  'processing', 'completed', 'failed'])->default('pending');
+            $table->foreignId('user_id')->constrained()->onDelete('cascade');
 
             $table->index('status');
             $table->index('user_id');

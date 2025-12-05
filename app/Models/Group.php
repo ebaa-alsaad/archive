@@ -9,7 +9,7 @@ class Group extends Model
 {
     use HasFactory;
 
-    protected $fillable = ['upload_id','user_id','code','pdf_path','pages_count'];
+    protected $fillable = ['code', 'pages_count', 'pdf_path','user_id','upload_id'];
 
       public function user()
     {
