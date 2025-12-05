@@ -1,137 +1,190 @@
 <?php
+
 namespace App\Http\Controllers;
 
-use App\Jobs\ProcessUpload;
 use App\Models\Upload;
+use App\Jobs\ProcessUploadJob;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use TusPhp\Tus\Server as TusServer;
-use TusPhp\Handler\Dispatcher;
-use TusPhp\Middleware\Cors;
 use Illuminate\Support\Str;
-use ZipArchive;
 
 class UploadController extends Controller
 {
-    // Tus server endpoint (receives chunk uploads)
-    public function tusServer(Request $request)
-    {
-        // configure tus server to use storage directory storage/app/tus
-        $server = new TusServer('file'); // use file store
-        $server->setApiPath('/tus'); // doit match client
-        $server->setUploadDir(storage_path('app/tus'));
-
-        // create dispatcher to handle request
-        $response = $server->serve();
-        $response->send();
-        exit; // tus-php handles response directly
-    }
-
-    // Called by client after tus upload is complete with the tus file URI
-    public function complete(Request $request)
-    {
-        $request->validate([
-            'upload_url' => 'required|string',
-            'original_filename' => 'required|string'
-        ]);
-
-        $uploadUrl = $request->input('upload_url'); // e.g. /files/<id>
-        $original = $request->input('original_filename');
-
-        // tus-php stores files in storage/app/tus/<file id>
-        // extract id from URL (last path segment)
-        $id = basename(parse_url($uploadUrl, PHP_URL_PATH));
-
-        $tusDir = storage_path("app/tus");
-        $src = "{$tusDir}/{$id}";
-
-        if (!file_exists($src)) {
-            return response()->json(['success'=>false,'error'=>'Tus file not found on server'], 404);
-        }
-
-        // move to private storage and record Upload
-        $newName = 'uploads/' . Str::random(10) . '_' . preg_replace('/\s+/', '_', $original);
-        Storage::disk('private')->put($newName, file_get_contents($src));
-
-        $upload = Upload::create([
-            'original_filename' => $original,
-            'stored_filename' => $newName,
-            'tus_path' => $id,
-            'status' => 'queued',
-            'user_id' => auth()->id(),
-        ]);
-
-        // remove tus temp file to free space
-        @unlink($src);
-
-        // dispatch job
-        ProcessUpload::dispatch($upload->id);
-
-        return response()->json([
-            'success'=>true,
-            'upload_id'=>$upload->id,
-            'message'=>'Uploaded and queued for processing'
-        ]);
-    }
-
-    // progress endpoint (reads redis)
-    public function progress($uploadId)
-    {
-        $progress = cache()->store('redis')->get("upload_progress:{$uploadId}") ?? Redis::get("upload_progress:{$uploadId}") ?? 0;
-        $msg = cache()->store('redis')->get("upload_message:{$uploadId}") ?? Redis::get("upload_message:{$uploadId}") ?? '';
-        return response()->json(['progress'=>(int)$progress,'message'=>$msg]);
-    }
-
+    /**
+     * قائمة الملفات
+     */
     public function index()
     {
-        $uploads = Upload::orderBy('created_at','desc')->paginate(20);
+        $uploads = Upload::latest()->paginate(20);
         return view('uploads.index', compact('uploads'));
     }
 
-    // download all groups as zip
-    public function downloadAllGroupsZip(Upload $upload)
+    /**
+     * صفحة الرفع
+     */
+    public function create()
     {
-        if ($upload->groups()->count() === 0) {
-            return redirect()->back()->with('error','لا توجد مجموعات للتحميل');
-        }
-        $zipName = 'groups_for_' . pathinfo($upload->original_filename, PATHINFO_FILENAME) . '.zip';
-        $temp = storage_path('app/temp/'.$zipName);
-        if (!file_exists(dirname($temp))) mkdir(dirname($temp), 0775, true);
-
-        $zip = new ZipArchive;
-        if ($zip->open($temp, ZipArchive::CREATE | ZipArchive::OVERWRITE) === true) {
-            foreach ($upload->groups as $g) {
-                $path = storage_path('app/private/' . $g->pdf_path);
-                if (file_exists($path)) {
-                    $zip->addFile($path, basename($g->pdf_path));
-                }
-            }
-            $zip->close();
-            return response()->download($temp, $zipName)->deleteFileAfterSend(true);
-        }
-
-        return redirect()->back()->with('error','فشل إنشاء ZIP');
+        return view('uploads.create');
     }
 
-    // delete upload (and groups)
-    public function destroy(Upload $upload)
+    /**
+     * نقطة tus الرئيسية (رفع مباشر)
+     */
+    public function tusServer(Request $request)
     {
-        // delete stored file
-        if ($upload->stored_filename && Storage::disk('private')->exists($upload->stored_filename)) {
-            Storage::disk('private')->delete($upload->stored_filename);
+        $server = new TusServer('file');
+        $server->setUploadDir(storage_path('app/tus'));
+
+        $response = $server->serve();
+
+        $status = $response->getStatusCode();
+
+        // بعد انتهاء رفع ملف بالكامل
+        if ($status === 204) {
+            $fileMeta = $server->getCache()->get($server->getKey());
+
+            if ($fileMeta && isset($fileMeta['file_path'])) {
+                // تحويل ملف tus المؤقت إلى storage/archives
+                $finalName = Str::uuid() . '.pdf';
+                $finalPath = 'archives/' . $finalName;
+
+                Storage::put($finalPath, file_get_contents($fileMeta['file_path']));
+            }
         }
 
-        // delete group files
-        foreach ($upload->groups as $g) {
-            if (Storage::disk('private')->exists($g->pdf_path)) {
-                Storage::disk('private')->delete($g->pdf_path);
+        return $response->send();
+    }
+
+    /**
+     * إكمال الرفع (Called by Uppy after successful upload)
+     */
+    public function complete(Request $request)
+    {
+        $request->validate([
+            'original_filename' => 'required|string',
+            'upload_url'        => 'required|string',
+        ]);
+
+        // استخراج اسم الملف النهائي على السيرفر
+        $filePath = $this->getTusFilePath($request->upload_url);
+
+        if (!$filePath || !Storage::exists($filePath)) {
+            return response()->json([
+                'error' => 'File not found on server',
+                'path'  => $filePath,
+            ], 404);
+        }
+
+        // إنشاء سجل في قاعدة البيانات
+        $upload = Upload::create([
+            'original_filename' => $request->original_filename,
+            'stored_path'       => $filePath,
+            'status'            => 'pending',
+        ]);
+
+        // تشغيل الجوب
+        ProcessUploadJob::dispatch($upload->id);
+
+        return response()->json([
+            'success'   => true,
+            'upload_id' => $upload->id,
+        ]);
+    }
+
+    /**
+     * استخراج مسار الملف من رابط Uppy
+     */
+    private function getTusFilePath($uploadUrl)
+    {
+        // مثال رابط من Uppy:
+        // https://domain.com/tus/30213132aabbccdd
+        $parts = explode('/tus/', $uploadUrl);
+
+        if (count($parts) !== 2) {
+            return null;
+        }
+
+        $id = $parts[1];
+
+        // مسار tus temp
+        $folder = storage_path("app/tus/$id");
+
+        if (!file_exists($folder)) {
+            return null;
+        }
+
+        // داخل كل مجلد tus يوجد ملف واحد فقط
+        $files = scandir($folder);
+        $file = collect($files)->reject(fn ($f) => in_array($f, ['.', '..']))->first();
+
+        if (!$file) {
+            return null;
+        }
+
+        return "tus/$id/$file";
+    }
+
+    /**
+     * إرجاع progress — في حال احتجته (اختياري)
+     */
+    public function progress($uploadId)
+    {
+        $upload = Upload::findOrFail($uploadId);
+
+        return response()->json([
+            'status' => $upload->status,
+            'processed_pages' => $upload->processed_pages,
+            'total_pages'     => $upload->total_pages,
+        ]);
+    }
+
+    /**
+     * تحميل جميع المجموعات بصيغة ZIP
+     */
+    public function downloadAllGroupsZip(Upload $upload)
+    {
+        $dir = "groups/{$upload->id}";
+
+        if (!Storage::exists($dir)) {
+            return back()->with('error', 'لا توجد مجموعات متاحة لهذا الرفع.');
+        }
+
+        $zipName = "groups_{$upload->id}.zip";
+        $zipPath = storage_path("app/$zipName");
+
+        $zip = new \ZipArchive;
+
+        if ($zip->open($zipPath, \ZipArchive::CREATE) === TRUE) {
+
+            $files = Storage::files($dir);
+
+            foreach ($files as $file) {
+                $zip->addFile(storage_path("app/$file"), basename($file));
             }
-            $g->delete();
+
+            $zip->close();
+        }
+
+        return response()->download($zipPath)->deleteFileAfterSend(true);
+    }
+
+    /**
+     * حذف رفع كامل + الملفات + المجموعات
+     */
+    public function destroy(Upload $upload)
+    {
+        if ($upload->stored_path && Storage::exists($upload->stored_path)) {
+            Storage::delete($upload->stored_path);
+        }
+
+        $groupsPath = "groups/{$upload->id}";
+        if (Storage::exists($groupsPath)) {
+            Storage::deleteDirectory($groupsPath);
         }
 
         $upload->delete();
 
-        return response()->json(['success'=>true]);
+        return back()->with('success', 'تم حذف الرفع بنجاح');
     }
 }
