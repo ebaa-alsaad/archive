@@ -11,86 +11,63 @@
 
     <!-- حالة الرفع الأساسية -->
     <div id="upload-card" class="bg-white p-8 rounded-2xl shadow-xl border border-gray-100">
-        <form id="upload-form" class="space-y-6" enctype="multipart/form-data">
-            @csrf
-            <div class="mb-6">
-                <input id="file-input" type="file" name="pdf_file" accept="application/pdf" class="hidden" required/>
-                <div id="drop-zone"
-                     class="flex flex-col items-center justify-center w-full h-64 border-3 border-dashed border-gray-300 bg-gray-50 hover:bg-gray-100 rounded-2xl cursor-pointer transition-all duration-300 ease-in-out">
-                    <div class="flex flex-col items-center justify-center text-center px-6">
-                        <i id="upload-icon" class="fa-solid fa-file-arrow-up text-6xl mb-4 text-blue-500 transition-all duration-300"></i>
-                        <p class="mb-2 text-xl text-gray-700 font-bold">
-                            <span class="text-blue-700">اسحب وأفلت ملف PDF</span> أو انقر للتحميل
-                        </p>
-                        <p class="text-sm text-gray-500 mb-2">ملفات PDF فقط</p>
-                        <p class="text-xs text-gray-400">الحد الأقصى 200MB • المعالجة تستغرق عدة دقائق</p>
-                        <p id="file-name" class="mt-4 text-base text-gray-800 font-semibold max-w-md truncate hidden"></p>
-                        <p id="file-size" class="text-sm text-gray-600 hidden"></p>
-                    </div>
-                </div>
-            </div>
+        <div id="drop-zone" class="w-full h-64"></div>
 
-            <!-- معلومات إضافية -->
-            <div id="file-info" class="hidden bg-blue-50 p-4 rounded-lg border border-blue-200">
-                <div class="flex items-center justify-between">
-                    <div>
-                        <h4 class="font-semibold text-blue-800" id="info-filename"></h4>
-                        <p class="text-sm text-blue-600" id="info-filesize"></p>
-                        <p class="text-xs text-blue-500" id="info-pages"></p>
-                    </div>
-                    <button type="button" onclick="clearFile()" class="text-red-500 hover:text-red-700 p-2">
-                        <i class="fa-solid fa-times"></i> إزالة
-                    </button>
+        <!-- معلومات إضافية -->
+        <div id="file-info" class="hidden bg-blue-50 p-4 rounded-lg border border-blue-200 mt-4">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h4 class="font-semibold text-blue-800" id="info-filename"></h4>
+                    <p class="text-sm text-blue-600" id="info-filesize"></p>
+                    <p class="text-xs text-blue-500" id="info-pages"></p>
                 </div>
+                <button type="button" onclick="resetUploadUI()" class="text-red-500 hover:text-red-700 p-2">
+                    <i class="fa-solid fa-times"></i> إزالة
+                </button>
             </div>
+        </div>
 
-            <!-- تقدم الرفع -->
-            <div id="upload-progress-container" class="space-y-3 hidden">
-                <div class="flex justify-between items-center text-sm font-semibold text-gray-700">
-                    <span id="upload-progress-message">جاري رفع الملف...</span>
-                    <span id="upload-progress-percentage">0%</span>
-                </div>
-                <div class="w-full bg-gray-200 rounded-full h-2.5">
-                    <div id="upload-progress-bar" class="bg-blue-500 h-2.5 rounded-full transition-all duration-300 ease-out" style="width: 0%"></div>
-                </div>
+        <!-- تقدم الرفع -->
+        <div id="upload-progress-container" class="space-y-3 hidden mt-4">
+            <div class="flex justify-between items-center text-sm font-semibold text-gray-700">
+                <span id="upload-progress-message">جاري رفع الملف...</span>
+                <span id="upload-progress-percentage">0%</span>
             </div>
-
-            <!-- تقدم المعالجة -->
-            <div id="processing-progress-container" class="space-y-3 hidden">
-                <div class="flex justify-between items-center text-sm font-semibold text-gray-700">
-                    <span id="processing-progress-message">جاري معالجة الملف...</span>
-                    <span id="processing-progress-percentage">0%</span>
-                </div>
-                <div class="w-full bg-gray-200 rounded-full h-2.5">
-                    <div id="processing-progress-bar" class="bg-green-500 h-2.5 rounded-full transition-all duration-300 ease-out" style="width: 0%"></div>
-                </div>
-                <div class="text-xs text-gray-500 text-center" id="processing-details">
-                    تجهيز الصفحات واستخراج المعلومات...
-                </div>
+            <div class="w-full bg-gray-200 rounded-full h-2.5">
+                <div id="upload-progress-bar" class="bg-blue-500 h-2.5 rounded-full transition-all duration-300 ease-out" style="width: 0%"></div>
             </div>
+        </div>
 
-            <button type="submit" id="start-archiving"
-                    disabled
-                    class="w-full bg-gradient-to-r from-blue-600 to-blue-500 text-white px-8 py-4 rounded-xl font-bold text-lg shadow-lg disabled:opacity-50 disabled:cursor-not-allowed hover:from-blue-700 hover:to-blue-600 transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98]">
-                <i class="fa-solid fa-paper-plane ml-2"></i> بدء عملية الأرشفة
-            </button>
-
-            <!-- معلومات المساعدة -->
-            <div class="text-center text-sm text-gray-500 mt-4">
-                <p>⏱️ قد تستغرق العملية من 2-10 دقائق حسب حجم الملف</p>
+        <!-- تقدم المعالجة -->
+        <div id="processing-progress-container" class="space-y-3 hidden mt-4">
+            <div class="flex justify-between items-center text-sm font-semibold text-gray-700">
+                <span id="processing-progress-message">جاري معالجة الملف...</span>
+                <span id="processing-progress-percentage">0%</span>
             </div>
-        </form>
+            <div class="w-full bg-gray-200 rounded-full h-2.5">
+                <div id="processing-progress-bar" class="bg-green-500 h-2.5 rounded-full transition-all duration-300 ease-out" style="width: 0%"></div>
+            </div>
+            <div class="text-xs text-gray-500 text-center" id="processing-details">
+                تجهيز الصفحات واستخراج المعلومات...
+            </div>
+        </div>
+
+        <button type="button" id="start-archiving"
+                disabled
+                class="w-full bg-gradient-to-r from-blue-600 to-blue-500 text-white px-8 py-4 rounded-xl font-bold text-lg shadow-lg disabled:opacity-50 disabled:cursor-not-allowed hover:from-blue-700 hover:to-blue-600 transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] mt-4">
+            <i class="fa-solid fa-paper-plane ml-2"></i> بدء عملية الأرشفة
+        </button>
     </div>
 
     <!-- نتائج المعالجة -->
-    <div id="results-container" class="hidden bg-green-50 p-6 rounded-2xl border border-green-200">
+    <div id="results-container" class="hidden bg-green-50 p-6 rounded-2xl border border-green-200 mt-4">
         <div class="text-center">
             <i class="fa-solid fa-circle-check text-green-500 text-4xl mb-3"></i>
             <h3 class="text-xl font-bold text-green-800 mb-2">تمت المعالجة بنجاح!</h3>
             <p class="text-green-600 mb-2" id="results-message"></p>
             <p class="text-green-500 text-sm mb-4" id="results-details"></p>
             <div class="flex gap-3 justify-center">
-                <button onclick="resetToUpload()" class="bg-green-500 text-white px-6 py-2 rounded-lg hover:bg-green-600 transition-colors">
+                <button onclick="resetUploadUI()" class="bg-green-500 text-white px-6 py-2 rounded-lg hover:bg-green-600 transition-colors">
                     <i class="fa-solid fa-plus ml-2"></i> رفع ملف جديد
                 </button>
                 <button onclick="viewUploads()" class="bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600 transition-colors">
@@ -101,12 +78,12 @@
     </div>
 
     <!-- حالة الخطأ -->
-    <div id="error-container" class="hidden bg-red-50 p-6 rounded-2xl border border-red-200">
+    <div id="error-container" class="hidden bg-red-50 p-6 rounded-2xl border border-red-200 mt-4">
         <div class="text-center">
             <i class="fa-solid fa-circle-exclamation text-red-500 text-4xl mb-3"></i>
             <h3 class="text-xl font-bold text-red-800 mb-2">فشلت المعالجة</h3>
             <p class="text-red-600 mb-4" id="error-message"></p>
-            <button onclick="resetToUpload()" class="bg-red-500 text-white px-6 py-2 rounded-lg hover:bg-red-600 transition-colors">
+            <button onclick="resetUploadUI()" class="bg-red-500 text-white px-6 py-2 rounded-lg hover:bg-red-600 transition-colors">
                 <i class="fa-solid fa-rotate-left ml-2"></i> المحاولة مرة أخرى
             </button>
         </div>
@@ -114,10 +91,7 @@
 </div>
 
 <script>
-// --- عناصر DOM ---
 const archiveButton = document.getElementById('start-archiving');
-const fileNameDisplay = document.getElementById('file-name');
-const fileSizeDisplay = document.getElementById('file-size');
 const fileInfo = document.getElementById('file-info');
 const infoFilename = document.getElementById('info-filename');
 const infoFilesize = document.getElementById('info-filesize');
@@ -126,7 +100,6 @@ const processingProgressContainer = document.getElementById('processing-progress
 const resultsContainer = document.getElementById('results-container');
 const errorContainer = document.getElementById('error-container');
 const toastContainer = document.getElementById('toast-container');
-const dropZone = document.getElementById('drop-zone');
 
 let currentUploadId = null;
 let statusInterval = null;
@@ -164,21 +137,14 @@ function formatFileSize(bytes) {
 }
 
 function updateFileInfo(file) {
-    fileNameDisplay.textContent = file.name;
-    fileNameDisplay.classList.remove('hidden');
-    fileSizeDisplay.textContent = formatFileSize(file.size);
-    fileSizeDisplay.classList.remove('hidden');
     infoFilename.textContent = file.name;
     infoFilesize.textContent = formatFileSize(file.size);
     fileInfo.classList.remove('hidden');
     archiveButton.disabled = false;
 }
 
-// --- إعادة تعيين ---
 function resetUploadUI() {
     archiveButton.disabled = true;
-    fileNameDisplay.classList.add('hidden');
-    fileSizeDisplay.classList.add('hidden');
     fileInfo.classList.add('hidden');
     uploadProgressContainer.classList.add('hidden');
     processingProgressContainer.classList.add('hidden');
@@ -188,6 +154,82 @@ function resetUploadUI() {
     if (statusInterval) {
         clearInterval(statusInterval);
         statusInterval = null;
+    }
+}
+
+// --- Uppy Setup ---
+const uppy = new Uppy.Core({
+    autoProceed: true,
+    restrictions: {
+        maxFileSize: 250 * 1024 * 1024, // 250MB
+        allowedFileTypes: ['application/pdf']
+    }
+});
+
+uppy.use(Uppy.Dashboard, {
+    inline: true,
+    target: '#drop-zone',
+    proudlyDisplayPoweredByUppy: false,
+    showProgressDetails: true,
+    note: 'ملفات PDF فقط • الحد الأقصى 250MB',
+    height: 200
+});
+
+uppy.use(Uppy.Tus, {
+    endpoint: '/uploads/chunk',
+    chunkSize: 5 * 1024 * 1024,
+    retryDelays: [0, 1000, 3000, 5000],
+    meta: {
+        user_id: '{{ auth()->id() }}'
+    }
+});
+
+// عند إضافة ملف
+uppy.on('file-added', file => {
+    updateFileInfo(file);
+});
+
+// تتبع تقدم الرفع
+uppy.on('upload-progress', (file, progress) => {
+    uploadProgressContainer.classList.remove('hidden');
+    const percentage = Math.round(progress.bytesUploaded / progress.bytesTotal * 100);
+    document.getElementById('upload-progress-bar').style.width = percentage + '%';
+    document.getElementById('upload-progress-percentage').textContent = percentage + '%';
+});
+
+// عند اكتمال الرفع
+uppy.on('upload-success', (file, response) => {
+    currentUploadId = response.body.upload_id;
+    showToast('تم الرفع بنجاح – جاري المعالجة...', 'success');
+    uploadProgressContainer.classList.add('hidden');
+    startProcessing();
+});
+
+// عند حدوث خطأ
+uppy.on('upload-error', (file, error) => {
+    showToast('فشل الرفع: ' + error, 'error');
+    resetUploadUI();
+});
+
+// --- بدء المعالجة ---
+async function startProcessing() {
+    if (!currentUploadId) return;
+    processingProgressContainer.classList.remove('hidden');
+    try {
+        const processResponse = await fetch(`/uploads/${currentUploadId}/process`, {
+            method: 'POST',
+            headers: {
+                'X-CSRF-TOKEN': '{{ csrf_token() }}',
+                'Accept': 'application/json'
+            }
+        });
+        const processData = await processResponse.json();
+        if (!processData.success) throw new Error(processData.error || 'فشلت المعالجة');
+        showToast('تمت المعالجة بنجاح!', 'success');
+        showResults(processData);
+    } catch (err) {
+        console.error(err);
+        startStatusChecking();
     }
 }
 
@@ -243,115 +285,36 @@ function startStatusChecking() {
     }, 3000);
 }
 
-// --- بدء المعالجة ---
-async function startProcessing() {
-    if (!currentUploadId) return;
-    processingProgressContainer.classList.remove('hidden');
-    try {
-        const processResponse = await fetch(`/uploads/${currentUploadId}/process`, {
-            method: 'POST',
-            headers: {
-                'X-CSRF-TOKEN': '{{ csrf_token() }}',
-                'Accept': 'application/json'
-            }
-        });
-        const processData = await processResponse.json();
-        if (!processData.success) throw new Error(processData.error || 'فشلت المعالجة');
-        showToast('تمت المعالجة بنجاح!', 'success');
-        showResults(processData);
-    } catch (err) {
-        console.error(err);
-        startStatusChecking();
-    }
-}
-
-// --- إعداد Uppy ---
-const uppy = new Uppy.Core({
-    autoProceed: true,
-    restrictions: {
-        maxFileSize: 250 * 1024 * 1024, // 250MB
-        allowedFileTypes: ['application/pdf']
-    }
-});
-
-uppy.use(Uppy.Dashboard, {
-    inline: true,
-    target: '#drop-zone',
-    proudlyDisplayPoweredByUppy: false,
-});
-
-uppy.use(Uppy.Tus, {
-    endpoint: '/uploads/chunk',
-    chunkSize: 5 * 1024 * 1024, // 5MB
-    retryDelays: [0, 1000, 3000, 5000],
-    meta: {
-        user_id: '{{ auth()->id() }}'
-    }
-});
-
-// عند إضافة ملف
-uppy.on('file-added', file => {
-    updateFileInfo(file);
-});
-
-// تتبع تقدم الرفع
-uppy.on('upload-progress', (file, progress) => {
-    uploadProgressContainer.classList.remove('hidden');
-    const percentage = Math.round(progress.bytesUploaded / progress.bytesTotal * 100);
-    document.getElementById('upload-progress-bar').style.width = percentage + '%';
-    document.getElementById('upload-progress-percentage').textContent = percentage + '%';
-});
-
-// عند اكتمال الرفع
-uppy.on('upload-success', (file, response) => {
-    currentUploadId = response.body.upload_id;
-    showToast('تم الرفع بنجاح – جاري المعالجة...', 'success');
-    uploadProgressContainer.classList.add('hidden');
-    startProcessing();
-});
-
-// عند حدوث خطأ
-uppy.on('upload-error', (file, error) => {
-    showToast('فشل الرفع: ' + error, 'error');
-    resetUploadUI();
-});
-
 // --- تنظيف عند الخروج ---
 window.addEventListener('beforeunload', () => {
     if (statusInterval) clearInterval(statusInterval);
 });
 </script>
 
-
 <style>
 .animate-fade-in {
     animation: fadeIn 0.3s ease-in-out;
 }
-
 .animate-fade-out {
     animation: fadeOut 0.3s ease-in-out;
 }
-
 @keyframes fadeIn {
     from { opacity: 0; transform: translateY(-10px); }
     to { opacity: 1; transform: translateY(0); }
 }
-
 @keyframes fadeOut {
     from { opacity: 1; transform: translateY(0); }
     to { opacity: 0; transform: translateY(-10px); }
 }
-
 #drop-zone {
+    border: 3px dashed #d1d5db;
+    border-radius: 1rem;
     transition: all 0.3s ease;
 }
-
 #drop-zone:hover {
     border-color: #3b82f6;
     background-color: #f8fafc;
 }
-
-/* تصميم بسيط للشريط */
 #upload-progress-bar, #processing-progress-bar {
     transition: width 0.3s ease;
 }
