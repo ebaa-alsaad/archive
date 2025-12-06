@@ -9,16 +9,17 @@
 
     <div id="toast-container" class="fixed top-5 right-5 z-[100] space-y-2 max-w-sm"></div>
 
-    <!-- Dropzone Uppy -->
+    <!-- حالة الرفع الأساسية -->
     <div id="upload-card" class="bg-white p-8 rounded-2xl shadow-xl border border-gray-100">
-        <div id="drop-zone"></div>
+        <div id="drop-zone" class="w-full h-64"></div>
 
-        <!-- معلومات الملف -->
+        <!-- معلومات إضافية -->
         <div id="file-info" class="hidden bg-blue-50 p-4 rounded-lg border border-blue-200 mt-4">
             <div class="flex items-center justify-between">
                 <div>
                     <h4 class="font-semibold text-blue-800" id="info-filename"></h4>
                     <p class="text-sm text-blue-600" id="info-filesize"></p>
+                    <p class="text-xs text-blue-500" id="info-pages"></p>
                 </div>
                 <button type="button" onclick="resetUploadUI()" class="text-red-500 hover:text-red-700 p-2">
                     <i class="fa-solid fa-times"></i> إزالة
@@ -37,7 +38,20 @@
             </div>
         </div>
 
-        <!-- زر بدء الأرشفة -->
+        <!-- تقدم المعالجة -->
+        <div id="processing-progress-container" class="space-y-3 hidden mt-4">
+            <div class="flex justify-between items-center text-sm font-semibold text-gray-700">
+                <span id="processing-progress-message">جاري معالجة الملف...</span>
+                <span id="processing-progress-percentage">0%</span>
+            </div>
+            <div class="w-full bg-gray-200 rounded-full h-2.5">
+                <div id="processing-progress-bar" class="bg-green-500 h-2.5 rounded-full transition-all duration-300 ease-out" style="width: 0%"></div>
+            </div>
+            <div class="text-xs text-gray-500 text-center" id="processing-details">
+                تجهيز الصفحات واستخراج المعلومات...
+            </div>
+        </div>
+
         <button type="button" id="start-archiving"
                 disabled
                 class="w-full bg-gradient-to-r from-blue-600 to-blue-500 text-white px-8 py-4 rounded-xl font-bold text-lg shadow-lg disabled:opacity-50 disabled:cursor-not-allowed hover:from-blue-700 hover:to-blue-600 transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] mt-4">
@@ -46,126 +60,263 @@
     </div>
 
     <!-- نتائج المعالجة -->
-    <div id="results-container" class="hidden bg-green-50 p-6 rounded-2xl border border-green-200 mt-4 text-center">
-        <i class="fa-solid fa-circle-check text-green-500 text-4xl mb-3"></i>
-        <h3 class="text-xl font-bold text-green-800 mb-2">تمت المعالجة بنجاح!</h3>
-        <p class="text-green-600 mb-2" id="results-message"></p>
-        <p class="text-green-500 text-sm mb-4" id="results-details"></p>
-        <div class="flex gap-3 justify-center">
-            <button onclick="resetUploadUI()" class="bg-green-500 text-white px-6 py-2 rounded-lg hover:bg-green-600 transition-colors">
-                <i class="fa-solid fa-plus ml-2"></i> رفع ملف جديد
-            </button>
+    <div id="results-container" class="hidden bg-green-50 p-6 rounded-2xl border border-green-200 mt-4">
+        <div class="text-center">
+            <i class="fa-solid fa-circle-check text-green-500 text-4xl mb-3"></i>
+            <h3 class="text-xl font-bold text-green-800 mb-2">تمت المعالجة بنجاح!</h3>
+            <p class="text-green-600 mb-2" id="results-message"></p>
+            <p class="text-green-500 text-sm mb-4" id="results-details"></p>
+            <div class="flex gap-3 justify-center">
+                <button onclick="resetUploadUI()" class="bg-green-500 text-white px-6 py-2 rounded-lg hover:bg-green-600 transition-colors">
+                    <i class="fa-solid fa-plus ml-2"></i> رفع ملف جديد
+                </button>
+                <button onclick="viewUploads()" class="bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600 transition-colors">
+                    <i class="fa-solid fa-list ml-2"></i> عرض جميع الملفات
+                </button>
+            </div>
         </div>
     </div>
 
     <!-- حالة الخطأ -->
-    <div id="error-container" class="hidden bg-red-50 p-6 rounded-2xl border border-red-200 mt-4 text-center">
-        <i class="fa-solid fa-circle-exclamation text-red-500 text-4xl mb-3"></i>
-        <h3 class="text-xl font-bold text-red-800 mb-2">فشلت المعالجة</h3>
-        <p class="text-red-600 mb-4" id="error-message"></p>
-        <button onclick="resetUploadUI()" class="bg-red-500 text-white px-6 py-2 rounded-lg hover:bg-red-600 transition-colors">
-            <i class="fa-solid fa-rotate-left ml-2"></i> المحاولة مرة أخرى
-        </button>
+    <div id="error-container" class="hidden bg-red-50 p-6 rounded-2xl border border-red-200 mt-4">
+        <div class="text-center">
+            <i class="fa-solid fa-circle-exclamation text-red-500 text-4xl mb-3"></i>
+            <h3 class="text-xl font-bold text-red-800 mb-2">فشلت المعالجة</h3>
+            <p class="text-red-600 mb-4" id="error-message"></p>
+            <button onclick="resetUploadUI()" class="bg-red-500 text-white px-6 py-2 rounded-lg hover:bg-red-600 transition-colors">
+                <i class="fa-solid fa-rotate-left ml-2"></i> المحاولة مرة أخرى
+            </button>
+        </div>
     </div>
-
 </div>
 
-<!-- Uppy JS -->
 <script>
-document.addEventListener('DOMContentLoaded', function() {
-    const archiveButton = document.getElementById('start-archiving');
-    const fileInfo = document.getElementById('file-info');
-    const infoFilename = document.getElementById('info-filename');
-    const infoFilesize = document.getElementById('info-filesize');
-    const uploadProgressContainer = document.getElementById('upload-progress-container');
-    const processingProgressContainer = document.getElementById('processing-progress-container');
-    const resultsContainer = document.getElementById('results-container');
-    const errorContainer = document.getElementById('error-container');
-    const toastContainer = document.getElementById('toast-container');
+const archiveButton = document.getElementById('start-archiving');
+const fileInfo = document.getElementById('file-info');
+const infoFilename = document.getElementById('info-filename');
+const infoFilesize = document.getElementById('info-filesize');
+const uploadProgressContainer = document.getElementById('upload-progress-container');
+const processingProgressContainer = document.getElementById('processing-progress-container');
+const resultsContainer = document.getElementById('results-container');
+const errorContainer = document.getElementById('error-container');
+const toastContainer = document.getElementById('toast-container');
 
-    let currentUploadId = null;
+let currentUploadId = null;
+let statusInterval = null;
 
-    function showToast(message, type='info') {
-        const colors = {
-            success:'bg-green-500 text-white border-green-600',
-            error:'bg-red-500 text-white border-red-600',
-            info:'bg-blue-500 text-white border-blue-600'
-        };
-        const icons = {
-            success:'fa-circle-check',
-            error:'fa-circle-exclamation',
-            info:'fa-circle-info'
-        };
-        const toast = document.createElement('div');
-        toast.className = `p-4 rounded-lg shadow-lg border ${colors[type]} animate-fade-in flex items-center space-x-3`;
-        toast.innerHTML = `<i class="fa-solid ${icons[type]}"></i><span>${message}</span>`;
-        toastContainer.appendChild(toast);
-        setTimeout(()=>{toast.remove();},5000);
+// --- دوال مساعدة ---
+function showToast(message, type = 'info') {
+    const colors = {
+        success: 'bg-green-500 text-white border-green-600',
+        error: 'bg-red-500 text-white border-red-600',
+        warning: 'bg-yellow-500 text-white border-yellow-600',
+        info: 'bg-blue-500 text-white border-blue-600'
+    };
+    const icons = {
+        success: 'fa-circle-check',
+        error: 'fa-circle-exclamation',
+        warning: 'fa-triangle-exclamation',
+        info: 'fa-circle-info'
+    };
+    const toast = document.createElement('div');
+    toast.className = `p-4 rounded-lg shadow-lg border ${colors[type]} animate-fade-in flex items-center space-x-3 space-x-reverse`;
+    toast.innerHTML = `<i class="fa-solid ${icons[type]}"></i><span>${message}</span>`;
+    toastContainer.appendChild(toast);
+    setTimeout(() => {
+        toast.classList.add('animate-fade-out');
+        setTimeout(() => toast.remove(), 300);
+    }, 5000);
+}
+
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+function updateFileInfo(file) {
+    infoFilename.textContent = file.name;
+    infoFilesize.textContent = formatFileSize(file.size);
+    fileInfo.classList.remove('hidden');
+    archiveButton.disabled = false;
+}
+
+function resetUploadUI() {
+    archiveButton.disabled = true;
+    fileInfo.classList.add('hidden');
+    uploadProgressContainer.classList.add('hidden');
+    processingProgressContainer.classList.add('hidden');
+    resultsContainer.classList.add('hidden');
+    errorContainer.classList.add('hidden');
+    currentUploadId = null;
+    if (statusInterval) {
+        clearInterval(statusInterval);
+        statusInterval = null;
     }
+}
 
-    function formatFileSize(bytes) {
-        if(bytes===0) return '0 Bytes';
-        const k=1024, sizes=['Bytes','KB','MB','GB'], i=Math.floor(Math.log(bytes)/Math.log(k));
-        return parseFloat((bytes/Math.pow(k,i)).toFixed(2))+' '+sizes[i];
+// --- Uppy Setup ---
+const uppy = new Uppy.Core({
+    autoProceed: true,
+    restrictions: {
+        maxFileSize: 250 * 1024 * 1024, // 250MB
+        allowedFileTypes: ['application/pdf']
     }
+});
 
-    function updateFileInfo(file){
-        infoFilename.textContent = file.name;
-        infoFilesize.textContent = formatFileSize(file.size);
-        fileInfo.classList.remove('hidden');
-        archiveButton.disabled=false;
+uppy.use(Uppy.Dashboard, {
+    inline: true,
+    target: '#drop-zone',
+    proudlyDisplayPoweredByUppy: false,
+    showProgressDetails: true,
+    note: 'ملفات PDF فقط • الحد الأقصى 250MB',
+    height: 200
+});
+
+uppy.use(Uppy.Tus, {
+    endpoint: '/uploads/chunk',
+    chunkSize: 5 * 1024 * 1024,
+    retryDelays: [0, 1000, 3000, 5000],
+    meta: {
+        user_id: '{{ auth()->id() }}'
     }
+});
 
-    function resetUploadUI(){
-        archiveButton.disabled=true;
-        fileInfo.classList.add('hidden');
-        uploadProgressContainer.classList.add('hidden');
-        processingProgressContainer.classList.add('hidden');
-        resultsContainer.classList.add('hidden');
-        errorContainer.classList.add('hidden');
-        currentUploadId=null;
+// عند إضافة ملف
+uppy.on('file-added', file => {
+    updateFileInfo(file);
+});
+
+// تتبع تقدم الرفع
+uppy.on('upload-progress', (file, progress) => {
+    uploadProgressContainer.classList.remove('hidden');
+    const percentage = Math.round(progress.bytesUploaded / progress.bytesTotal * 100);
+    document.getElementById('upload-progress-bar').style.width = percentage + '%';
+    document.getElementById('upload-progress-percentage').textContent = percentage + '%';
+});
+
+// عند اكتمال الرفع
+uppy.on('upload-success', (file, response) => {
+    currentUploadId = response.body.upload_id;
+    showToast('تم الرفع بنجاح – جاري المعالجة...', 'success');
+    uploadProgressContainer.classList.add('hidden');
+    startProcessing();
+});
+
+// عند حدوث خطأ
+uppy.on('upload-error', (file, error) => {
+    showToast('فشل الرفع: ' + error, 'error');
+    resetUploadUI();
+});
+
+// --- بدء المعالجة ---
+async function startProcessing() {
+    if (!currentUploadId) return;
+    processingProgressContainer.classList.remove('hidden');
+    try {
+        const processResponse = await fetch(`/uploads/${currentUploadId}/process`, {
+            method: 'POST',
+            headers: {
+                'X-CSRF-TOKEN': '{{ csrf_token() }}',
+                'Accept': 'application/json'
+            }
+        });
+        const processData = await processResponse.json();
+        if (!processData.success) throw new Error(processData.error || 'فشلت المعالجة');
+        showToast('تمت المعالجة بنجاح!', 'success');
+        showResults(processData);
+    } catch (err) {
+        console.error(err);
+        startStatusChecking();
     }
+}
 
-    const uppy = new Uppy.Core({autoProceed:true});
-    uppy.use(Uppy.Dashboard,{
-        inline:true,
-        target:'#drop-zone',
-        proudlyDisplayPoweredByUppy:false,
-        showProgressDetails:true,
-        note:'ملفات PDF فقط • الحد الأقصى 250MB',
-        height:200
-    });
-    uppy.use(Uppy.Tus,{
-        endpoint:'/uploads/chunk',
-        chunkSize:5*1024*1024,
-        retryDelays:[0,1000,3000,5000],
-        meta:{user_id:'{{ auth()->id() }}'}
-    });
+// --- عرض النتائج ---
+function showResults(data) {
+    processingProgressContainer.classList.add('hidden');
+    resultsContainer.classList.remove('hidden');
 
-    uppy.on('file-added', file => updateFileInfo(file));
-    uppy.on('upload-progress',(file,progress)=>{
-        uploadProgressContainer.classList.remove('hidden');
-        const percentage = Math.round(progress.bytesUploaded/progress.bytesTotal*100);
-        document.getElementById('upload-progress-bar').style.width=percentage+'%';
-        document.getElementById('upload-progress-percentage').textContent=percentage+'%';
-    });
-    uppy.on('upload-success',(file,response)=>{
-        currentUploadId=response.body.upload_id;
-        showToast('تم الرفع بنجاح – جاري المعالجة...','success');
-        uploadProgressContainer.classList.add('hidden');
-        // هنا يمكن بدء المعالجة
-    });
-    uppy.on('upload-error',(file,error)=>{
-        showToast('فشل الرفع: '+error,'error');
-        resetUploadUI();
-    });
+    const groupsCount = data.groups_count || 0;
+    const totalPages = data.total_pages || 0;
+    document.getElementById('results-message').textContent = `تم إنشاء ${groupsCount} مجموعة بنجاح`;
+    document.getElementById('results-details').textContent = `من أصل ${totalPages} صفحة`;
+
+    if (currentUploadId && groupsCount > 0) {
+        showToast('جاري تحميل ملف ZIP..', 'info');
+        setTimeout(() => {
+            window.location.href = `/uploads/${currentUploadId}/download-all`;
+        }, 1000);
+    }
+}
+
+function showError(message) {
+    processingProgressContainer.classList.add('hidden');
+    errorContainer.classList.remove('hidden');
+    document.getElementById('error-message').textContent = message;
+}
+
+// --- تتبع الحالة ---
+function startStatusChecking() {
+    if (statusInterval) clearInterval(statusInterval);
+    statusInterval = setInterval(async () => {
+        if (!currentUploadId) return;
+        try {
+            const response = await fetch(`/uploads/${currentUploadId}/status`);
+            const data = await response.json();
+            if (!data.success) throw new Error(data.error || 'خطأ في التحقق من الحالة');
+
+            const statusMsg = document.getElementById('processing-progress-message');
+            const details = document.getElementById('processing-details');
+            if (statusMsg) statusMsg.textContent = data.message || 'جاري المعالجة...';
+            if (details) details.textContent = data.status === 'processing' ? 'قد تستغرق العملية عدة دقائق...' : 'جاري تحضير النتائج...';
+
+            if (data.status === 'completed') {
+                clearInterval(statusInterval);
+                showResults(data);
+            } else if (data.status === 'failed') {
+                clearInterval(statusInterval);
+                showError(data.message || 'فشلت المعالجة');
+            }
+        } catch (error) {
+            console.error('Status check error:', error);
+        }
+    }, 3000);
+}
+
+// --- تنظيف عند الخروج ---
+window.addEventListener('beforeunload', () => {
+    if (statusInterval) clearInterval(statusInterval);
 });
 </script>
 
 <style>
-#drop-zone{border:3px dashed #d1d5db;border-radius:1rem;transition:all 0.3s ease}
-#drop-zone:hover{border-color:#3b82f6;background-color:#f8fafc}
-.animate-fade-in{animation:fadeIn 0.3s ease-in-out}
-@keyframes fadeIn{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
+.animate-fade-in {
+    animation: fadeIn 0.3s ease-in-out;
+}
+.animate-fade-out {
+    animation: fadeOut 0.3s ease-in-out;
+}
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeOut {
+    from { opacity: 1; transform: translateY(0); }
+    to { opacity: 0; transform: translateY(-10px); }
+}
+#drop-zone {
+    border: 3px dashed #d1d5db;
+    border-radius: 1rem;
+    transition: all 0.3s ease;
+}
+#drop-zone:hover {
+    border-color: #3b82f6;
+    background-color: #f8fafc;
+}
+#upload-progress-bar, #processing-progress-bar {
+    transition: width 0.3s ease;
+}
 </style>
 @endsection
