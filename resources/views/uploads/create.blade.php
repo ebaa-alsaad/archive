@@ -114,25 +114,24 @@
 </div>
 
 <script>
-const fileInput = document.getElementById('file-input');
+// --- عناصر DOM ---
 const archiveButton = document.getElementById('start-archiving');
 const fileNameDisplay = document.getElementById('file-name');
 const fileSizeDisplay = document.getElementById('file-size');
-const dropZone = document.getElementById('drop-zone');
 const fileInfo = document.getElementById('file-info');
 const infoFilename = document.getElementById('info-filename');
 const infoFilesize = document.getElementById('info-filesize');
-
 const uploadProgressContainer = document.getElementById('upload-progress-container');
 const processingProgressContainer = document.getElementById('processing-progress-container');
 const resultsContainer = document.getElementById('results-container');
 const errorContainer = document.getElementById('error-container');
-
 const toastContainer = document.getElementById('toast-container');
+const dropZone = document.getElementById('drop-zone');
 
 let currentUploadId = null;
 let statusInterval = null;
 
+// --- دوال مساعدة ---
 function showToast(message, type = 'info') {
     const colors = {
         success: 'bg-green-500 text-white border-green-600',
@@ -140,23 +139,16 @@ function showToast(message, type = 'info') {
         warning: 'bg-yellow-500 text-white border-yellow-600',
         info: 'bg-blue-500 text-white border-blue-600'
     };
-
     const icons = {
         success: 'fa-circle-check',
         error: 'fa-circle-exclamation',
         warning: 'fa-triangle-exclamation',
         info: 'fa-circle-info'
     };
-
     const toast = document.createElement('div');
     toast.className = `p-4 rounded-lg shadow-lg border ${colors[type]} animate-fade-in flex items-center space-x-3 space-x-reverse`;
-    toast.innerHTML = `
-        <i class="fa-solid ${icons[type]}"></i>
-        <span>${message}</span>
-    `;
-
+    toast.innerHTML = `<i class="fa-solid ${icons[type]}"></i><span>${message}</span>`;
     toastContainer.appendChild(toast);
-
     setTimeout(() => {
         toast.classList.add('animate-fade-out');
         setTimeout(() => toast.remove(), 300);
@@ -171,267 +163,45 @@ function formatFileSize(bytes) {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-function updateFileInput(files) {
-    if (files && files.length > 0) {
-        const file = files[0];
-        const fileSizeMB = file.size / 1024 / 1024;
-
-        if (file.type !== 'application/pdf') {
-            showToast('يجب أن يكون الملف من نوع PDF', 'error');
-            resetFileInput();
-            return;
-        }
-
-        if (fileSizeMB > 250) {
-            showToast('حجم الملف يجب أن يكون أقل من 250MB', 'error');
-            resetFileInput();
-            return;
-        }
-        if (fileSizeMB > 100) {
-            showToast('الملف كبير وقد تستغرق المعالجة وقتاً أطول', 'warning');
-        }
-        fileNameDisplay.textContent = file.name;
-        fileNameDisplay.classList.remove('hidden');
-
-        fileSizeDisplay.textContent = formatFileSize(file.size);
-        fileSizeDisplay.classList.remove('hidden');
-
-        infoFilename.textContent = file.name;
-        infoFilesize.textContent = formatFileSize(file.size);
-        fileInfo.classList.remove('hidden');
-
-        archiveButton.disabled = false;
-        showToast('تم اختيار الملف بنجاح', 'success');
-    }
+function updateFileInfo(file) {
+    fileNameDisplay.textContent = file.name;
+    fileNameDisplay.classList.remove('hidden');
+    fileSizeDisplay.textContent = formatFileSize(file.size);
+    fileSizeDisplay.classList.remove('hidden');
+    infoFilename.textContent = file.name;
+    infoFilesize.textContent = formatFileSize(file.size);
+    fileInfo.classList.remove('hidden');
+    archiveButton.disabled = false;
 }
 
-function resetFileInput() {
-    fileInput.value = '';
+// --- إعادة تعيين ---
+function resetUploadUI() {
     archiveButton.disabled = true;
     fileNameDisplay.classList.add('hidden');
     fileSizeDisplay.classList.add('hidden');
     fileInfo.classList.add('hidden');
-}
-
-function clearFile() {
-    resetFileInput();
-    showToast('تم إزالة الملف', 'info');
-}
-
-function resetToUpload() {
-    resetFileInput();
     uploadProgressContainer.classList.add('hidden');
     processingProgressContainer.classList.add('hidden');
     resultsContainer.classList.add('hidden');
     errorContainer.classList.add('hidden');
-
-    archiveButton.disabled = true;
-    archiveButton.innerHTML = '<i class="fa-solid fa-paper-plane ml-2"></i> بدء عملية الأرشفة';
-
+    currentUploadId = null;
     if (statusInterval) {
         clearInterval(statusInterval);
         statusInterval = null;
     }
-
-    currentUploadId = null;
-    document.getElementById('upload-card').classList.remove('hidden');
 }
 
-// أحداث السحب والإفلات
-fileInput.addEventListener('change', (e) => {
-    e.stopPropagation();
-    updateFileInput(fileInput.files);
-});
-
-dropZone.addEventListener('click', (e) => {
-    e.stopPropagation();
-    fileInput.click();
-});
-
-dropZone.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    dropZone.classList.add('border-blue-500', 'bg-blue-50');
-});
-
-dropZone.addEventListener('dragleave', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    dropZone.classList.remove('border-blue-500', 'bg-blue-50');
-});
-
-dropZone.addEventListener('drop', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    dropZone.classList.remove('border-blue-500', 'bg-blue-50');
-
-    const files = e.dataTransfer.files;
-    if (files.length > 0) {
-        const dataTransfer = new DataTransfer();
-        dataTransfer.items.add(files[0]);
-        fileInput.files = dataTransfer.files;
-        updateFileInput(files);
-    }
-});
-
-// الإرسال
-document.getElementById('upload-form').addEventListener('submit', function(e) {
-    e.preventDefault();
-
-    if (!fileInput.files.length) {
-        showToast('يرجى اختيار ملف PDF أولاً', 'error');
-        return;
-    }
-
-    archiveButton.disabled = true;
-
-    const formData = new FormData(this);
-    const xhr = new XMLHttpRequest();
-
-    uploadProgressContainer.classList.remove('hidden');
-    xhr.timeout = 30 * 60 * 1000;
-
-    xhr.upload.addEventListener("progress", function(event) {
-        if (event.lengthComputable) {
-            const percent = Math.round((event.loaded / event.total) * 100);
-            document.getElementById("upload-progress-bar").style.width = percent + "%";
-            document.getElementById("upload-progress-percentage").textContent = percent + "%";
-            document.getElementById("upload-progress-message").textContent = "جاري رفع الملف...";
-        }
-    });
-
-    xhr.addEventListener("load", function() {
-        try {
-            const data = JSON.parse(xhr.responseText);
-
-            if (!data.success) {
-                throw new Error(data.error || "خطأ في الرفع");
-            }
-
-            currentUploadId = data.upload_id;
-            showToast("تم الرفع بنجاح – جاري المعالجة...", "success");
-
-            uploadProgressContainer.classList.add("hidden");
-            processingProgressContainer.classList.remove("hidden");
-
-            startProcessing();
-        } catch (e) {
-            showToast(e.message, "error");
-            resetToUpload();
-        }
-    });
-
-    xhr.addEventListener("error", function() {
-        showToast("فشل الاتصال بالخادم", "error");
-        resetToUpload();
-    });
-
-    xhr.open("POST", "{{ route('uploads.store') }}");
-    xhr.setRequestHeader("X-CSRF-TOKEN", "{{ csrf_token() }}");
-    xhr.send(formData);
-
-    archiveButton.innerHTML = '<i class="fa-solid fa-spinner fa-spin ml-2"></i> جاري الرفع...';
-});
-
-
-// بدء المعالجة
-async function startProcessing() {
-    if (!currentUploadId) return;
-
-    try {
-        // بدء المعالجة في الخادم
-        const processResponse = await fetch(`/uploads/${currentUploadId}/process`, {
-            method: 'POST',
-            headers: {
-                'X-CSRF-TOKEN': '{{ csrf_token() }}',
-                'Accept': 'application/json'
-            }
-        });
-
-        const processData = await processResponse.json();
-
-        if (!processData.success) {
-            throw new Error(processData.error || 'فشلت المعالجة');
-        }
-
-        // إذا نجحت المعالجة مباشرة
-        showToast('تمت المعالجة بنجاح!', 'success');
-        showResults(processData);
-
-    } catch (error) {
-        console.error('Processing error:', error);
-
-        // إذا فشلت المعالجة، تتبع الحالة
-        startStatusChecking();
-    }
-}
-
-// تتبع الحالة
-function startStatusChecking() {
-    if (statusInterval) {
-        clearInterval(statusInterval);
-    }
-
-    statusInterval = setInterval(async () => {
-        if (!currentUploadId) return;
-
-        try {
-            const response = await fetch(`/uploads/${currentUploadId}/status`);
-            const data = await response.json();
-
-            if (!data.success) {
-                throw new Error(data.error || 'خطأ في التحقق من الحالة');
-            }
-
-            // تحديث الواجهة حسب الحالة
-            updateProcessingStatus(data);
-
-            if (data.status === 'completed') {
-                clearInterval(statusInterval);
-                showResults(data);
-            } else if (data.status === 'failed') {
-                clearInterval(statusInterval);
-                showError(data.message || 'فشلت المعالجة');
-            }
-
-        } catch (error) {
-            console.error('Status check error:', error);
-        }
-    }, 3000);
-}
-
-function updateProcessingStatus(data) {
-    const statusElement = document.getElementById('processing-progress-message');
-    const detailsElement = document.getElementById('processing-details');
-
-    if (statusElement) {
-        statusElement.textContent = data.message || 'جاري المعالجة...';
-    }
-
-    if (detailsElement) {
-        if (data.status === 'processing') {
-            detailsElement.textContent = 'قد تستغرق العملية عدة دقائق...';
-        } else if (data.status === 'completed') {
-            detailsElement.textContent = 'جاري تحضير النتائج...';
-        }
-    }
-}
-
+// --- عرض النتائج ---
 function showResults(data) {
     processingProgressContainer.classList.add('hidden');
     resultsContainer.classList.remove('hidden');
-    document.getElementById('upload-card').classList.add('hidden');
 
     const groupsCount = data.groups_count || 0;
     const totalPages = data.total_pages || 0;
+    document.getElementById('results-message').textContent = `تم إنشاء ${groupsCount} مجموعة بنجاح`;
+    document.getElementById('results-details').textContent = `من أصل ${totalPages} صفحة`;
 
-    document.getElementById('results-message').textContent =
-        `تم إنشاء ${groupsCount} مجموعة بنجاح`;
-    document.getElementById('results-details').textContent =
-        `من أصل ${totalPages} صفحة`;
-
-    //  تحميل ZIP تلقائياً
-        if (currentUploadId && groupsCount > 0) {
+    if (currentUploadId && groupsCount > 0) {
         showToast('جاري تحميل ملف ZIP..', 'info');
         setTimeout(() => {
             window.location.href = `/uploads/${currentUploadId}/download-all`;
@@ -442,21 +212,100 @@ function showResults(data) {
 function showError(message) {
     processingProgressContainer.classList.add('hidden');
     errorContainer.classList.remove('hidden');
-    document.getElementById('upload-card').classList.add('hidden');
     document.getElementById('error-message').textContent = message;
 }
 
-function viewUploads() {
-    window.location.href = '{{ route("uploads.index") }}';
+// --- تتبع الحالة ---
+function startStatusChecking() {
+    if (statusInterval) clearInterval(statusInterval);
+    statusInterval = setInterval(async () => {
+        if (!currentUploadId) return;
+        try {
+            const response = await fetch(`/uploads/${currentUploadId}/status`);
+            const data = await response.json();
+            if (!data.success) throw new Error(data.error || 'خطأ في التحقق من الحالة');
+
+            const statusMsg = document.getElementById('processing-progress-message');
+            const details = document.getElementById('processing-details');
+            if (statusMsg) statusMsg.textContent = data.message || 'جاري المعالجة...';
+            if (details) details.textContent = data.status === 'processing' ? 'قد تستغرق العملية عدة دقائق...' : 'جاري تحضير النتائج...';
+
+            if (data.status === 'completed') {
+                clearInterval(statusInterval);
+                showResults(data);
+            } else if (data.status === 'failed') {
+                clearInterval(statusInterval);
+                showError(data.message || 'فشلت المعالجة');
+            }
+        } catch (error) {
+            console.error('Status check error:', error);
+        }
+    }, 3000);
 }
 
-// التنظيف
-window.addEventListener('beforeunload', () => {
-    if (statusInterval) {
-        clearInterval(statusInterval);
+// --- بدء المعالجة ---
+async function startProcessing() {
+    if (!currentUploadId) return;
+    processingProgressContainer.classList.remove('hidden');
+    try {
+        const processResponse = await fetch(`/uploads/${currentUploadId}/process`, {
+            method: 'POST',
+            headers: {
+                'X-CSRF-TOKEN': '{{ csrf_token() }}',
+                'Accept': 'application/json'
+            }
+        });
+        const processData = await processResponse.json();
+        if (!processData.success) throw new Error(processData.error || 'فشلت المعالجة');
+        showToast('تمت المعالجة بنجاح!', 'success');
+        showResults(processData);
+    } catch (err) {
+        console.error(err);
+        startStatusChecking();
     }
+}
+
+// --- إعداد Uppy ---
+const uppy = new Uppy.Core({ autoProceed: true, restrictions: { maxFileSize: 250 * 1024 * 1024, allowedFileTypes: ['application/pdf'] } });
+
+uppy.use(Uppy.Dashboard, { inline: true, target: '#drop-zone' });
+uppy.use(Uppy.Tus, { endpoint: '/uploads/chunk', chunkSize: 5 * 1024 * 1024 });
+
+uppy.on('file-added', (file) => {
+    updateFileInfo(file);
+    if (file.size > 100 * 1024 * 1024) showToast('الملف كبير وقد تستغرق المعالجة وقتاً أطول', 'warning');
+});
+
+uppy.on('upload-progress', (file, progress) => {
+    uploadProgressContainer.classList.remove('hidden');
+    document.getElementById('upload-progress-bar').style.width = Math.round(progress.bytesUploaded / progress.bytesTotal * 100) + '%';
+    document.getElementById('upload-progress-percentage').textContent = Math.round(progress.bytesUploaded / progress.bytesTotal * 100) + '%';
+    document.getElementById('upload-progress-message').textContent = 'جاري رفع الملف...';
+});
+
+uppy.on('upload-success', (file, response) => {
+    currentUploadId = response.body.upload_id;
+    showToast('تم الرفع بنجاح – جاري المعالجة...', 'success');
+    uploadProgressContainer.classList.add('hidden');
+    startProcessing();
+});
+
+uppy.on('upload-error', (file, error) => {
+    showToast('فشل الرفع: ' + error, 'error');
+    resetUploadUI();
+});
+
+// --- أزرار ---
+document.getElementById('start-archiving').addEventListener('click', () => {
+    if (!currentUploadId) showToast('يرجى اختيار ملف PDF أولاً', 'error');
+});
+
+// --- تنظيف عند الخروج ---
+window.addEventListener('beforeunload', () => {
+    if (statusInterval) clearInterval(statusInterval);
 });
 </script>
+
 
 <style>
 .animate-fade-in {
