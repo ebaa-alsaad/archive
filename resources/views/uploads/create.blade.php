@@ -266,7 +266,6 @@ async function startProcessing() {
 }
 
 // --- إعداد Uppy ---
-<script>
 const uppy = new Uppy.Core({
     autoProceed: true,
     restrictions: {
@@ -316,7 +315,6 @@ uppy.on('upload-error', (file, error) => {
     showToast('فشل الرفع: ' + error, 'error');
     resetUploadUI();
 });
-</script>
 
 // --- تنظيف عند الخروج ---
 window.addEventListener('beforeunload', () => {
