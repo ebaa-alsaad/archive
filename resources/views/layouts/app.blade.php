@@ -14,14 +14,14 @@
     {{-- استيراد خط Cairo --}}
     <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap" rel="stylesheet">
 
-   <!-- Uppy CSS -->
+    <!-- Uppy CSS -->
     <link href="https://releases.transloadit.com/uppy/v3.34.2/uppy.min.css" rel="stylesheet">
 
-    <!-- Uppy JS -->
+    <!-- Uppy JS Core -->
     <script src="https://releases.transloadit.com/uppy/v3.34.2/uppy.min.js"></script>
 
-    <!-- Uppy JS -->
-    <script src="https://releases.transloadit.com/uppy/v2.35.0/uppy.tus.min.js"></script>
+    <!-- Uppy Tus Plugin -->
+    <script src="https://releases.transloadit.com/uppy/v3.34.2/uppy.tus.min.js"></script>
 
 
     {{-- إضافة Alpine.js لدعم القائمة المنسدلة للبروفايل --}}
