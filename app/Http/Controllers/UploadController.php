@@ -5,7 +5,6 @@ namespace App\Http\Controllers;
 use ZipArchive;
 use Illuminate\Support\Str;
 use Illuminate\Http\Request;
-use App\Jobs\ProcessUploadJob;
 use App\Models\{Upload, Group};
 use App\Services\BarcodeOCRService;
 use Illuminate\Support\Facades\Log;

@@ -14,9 +14,6 @@
     {{-- استيراد خط Cairo --}}
     <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap" rel="stylesheet">
 
-    <!-- Uppy CSS -->
-    <link href="https://releases.transloadit.com/uppy/v3.34.2/uppy.min.css" rel="stylesheet">
-
     {{-- إضافة Alpine.js لدعم القائمة المنسدلة للبروفايل --}}
     <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js" defer></script>
 
@@ -171,12 +168,5 @@
         @yield('content')
     </main>
 
-
-     <!-- Uppy JS Core -->
-    <script src="https://releases.transloadit.com/uppy/v3.34.2/uppy.min.js"></script>
-    <!-- Uppy Dashboard -->
-    <script src="https://releases.transloadit.com/uppy/v3.34.2/uppy.dashboard.min.js"></script>
-    <!-- Uppy Tus Plugin -->
-    <script src="https://releases.transloadit.com/uppy/v3.34.2/uppy.tus.min.js"></script>
 </body>
 </html>
