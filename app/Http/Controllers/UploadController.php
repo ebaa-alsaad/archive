@@ -102,51 +102,6 @@ class UploadController extends Controller
         return redirect()->back()->with('error', 'حدث خطأ أثناء إنشاء ملف ZIP.');
     }
 
-     // تهيئة رفع جديد
-    public function initUpload(Request $request)
-    {
-        $fileName = $request->get('name');
-        $fileSize = $request->get('size');
-
-        $storedName = 'uploads/tmp/' . uniqid() . '_' . $fileName;
-
-        // إنشاء سجل مؤقت في DB
-        $upload = Upload::create([
-            'original_filename' => $fileName,
-            'stored_filename' => $storedName,
-            'status' => 'queued',
-            'total_pages' => 0,
-            'user_id' => auth()->id(),
-        ]);
-
-        return response()->json([
-            'upload_id' => $upload->id,
-            'stored_filename' => $storedName
-        ]);
-    }
-
-    // رفع Chunk
-    public function uploadChunk(Request $request)
-    {
-        $uploadId = $request->get('upload_id');
-        $upload = Upload::findOrFail($uploadId);
-
-        $chunk = $request->file('file');
-        $offset = (int)$request->get('offset', 0);
-
-        Storage::disk('private')->append($upload->stored_filename, file_get_contents($chunk));
-
-        // إذا اكتمل الملف
-        if ($request->get('is_last_chunk')) {
-            $upload->update(['status' => 'processing']);
-
-            // دفع Job للمعالجة الثقيلة
-            ProcessUploadJob::dispatch($upload);
-        }
-
-        return response()->json(['success' => true]);
-    }
-
     public function store(Request $request)
     {
         ini_set('upload_max_filesize', '250M');

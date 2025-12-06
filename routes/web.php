@@ -5,6 +5,7 @@ use App\Http\Controllers\GroupController;
 use App\Http\Controllers\UploadController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\TusUploadController;
 
 // الصفحة الرئيسية
 Route::get('/', function () {
@@ -27,17 +28,17 @@ Route::middleware(['auth'])->group(function () {
         Route::get('/{upload}/edit', 'edit')->name('edit');
         Route::patch('/{upload}', 'update')->name('update');
         Route::delete('/{upload}', 'destroy')->name('destroy');
-
+       
         // Custom routes
         Route::get('/{upload}/status', 'checkStatus')->name('status');
         Route::get('/uploaded-file/{upload}', 'showFile')->name('show_file');
         Route::get('/{upload}/download-all',  'downloadAllGroupsZip')->name('download_all_groups');
         Route::post('/{upload}/process','process')->name('process');
-        Route::post('/chunk', 'uploadChunk')->name('chunk');
-        Route::post('/init', 'initUpload')->name('init');
 
 
     });
+    Route::any('uploads/chunk', [TusUploadController::class, 'handle'])->name('tus.upload');
+
 
      // ----------------------
     // Group Routes

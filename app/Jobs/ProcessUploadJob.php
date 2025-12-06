@@ -1,3 +1,5 @@
+<?php
+
 namespace App\Jobs;
 
 use App\Models\Upload;
@@ -22,11 +24,12 @@ class ProcessUploadJob implements ShouldQueue
     {
         $this->upload->update(['status' => 'processing']);
 
-        $fullPath = Storage::disk('private')->path($this->upload->stored_filename);
-        $pageCount = $barcodeService->getPdfPageCount($fullPath);
-        $this->upload->update(['total_pages' => $pageCount]);
+        $path = Storage::disk('private')->path($this->upload->stored_filename);
 
-        $groups = $barcodeService->processPdf($this->upload, 'private');
+        $pages = $barcodeService->getPdfPageCount($path);
+        $this->upload->update(['total_pages' => $pages]);
+
+        $barcodeService->processPdf($this->upload, 'private');
 
         $this->upload->update(['status' => 'completed']);
     }

@@ -266,23 +266,44 @@ async function startProcessing() {
 }
 
 // --- إعداد Uppy ---
-const uppy = new Uppy.Core({ autoProceed: true, restrictions: { maxFileSize: 250 * 1024 * 1024, allowedFileTypes: ['application/pdf'] } });
-
-uppy.use(Uppy.Dashboard, { inline: true, target: '#drop-zone' });
-uppy.use(Uppy.Tus, { endpoint: '/uploads/chunk', chunkSize: 5 * 1024 * 1024 });
-
-uppy.on('file-added', (file) => {
-    updateFileInfo(file);
-    if (file.size > 100 * 1024 * 1024) showToast('الملف كبير وقد تستغرق المعالجة وقتاً أطول', 'warning');
+<script>
+const uppy = new Uppy.Core({
+    autoProceed: true,
+    restrictions: {
+        maxFileSize: 250 * 1024 * 1024, // 250MB
+        allowedFileTypes: ['application/pdf']
+    }
 });
 
+uppy.use(Uppy.Dashboard, {
+    inline: true,
+    target: '#drop-zone',
+    proudlyDisplayPoweredByUppy: false,
+});
+
+uppy.use(Uppy.Tus, {
+    endpoint: '/uploads/chunk',
+    chunkSize: 5 * 1024 * 1024, // 5MB
+    retryDelays: [0, 1000, 3000, 5000],
+    meta: {
+        user_id: '{{ auth()->id() }}'
+    }
+});
+
+// عند إضافة ملف
+uppy.on('file-added', file => {
+    updateFileInfo(file);
+});
+
+// تتبع تقدم الرفع
 uppy.on('upload-progress', (file, progress) => {
     uploadProgressContainer.classList.remove('hidden');
-    document.getElementById('upload-progress-bar').style.width = Math.round(progress.bytesUploaded / progress.bytesTotal * 100) + '%';
-    document.getElementById('upload-progress-percentage').textContent = Math.round(progress.bytesUploaded / progress.bytesTotal * 100) + '%';
-    document.getElementById('upload-progress-message').textContent = 'جاري رفع الملف...';
+    const percentage = Math.round(progress.bytesUploaded / progress.bytesTotal * 100);
+    document.getElementById('upload-progress-bar').style.width = percentage + '%';
+    document.getElementById('upload-progress-percentage').textContent = percentage + '%';
 });
 
+// عند اكتمال الرفع
 uppy.on('upload-success', (file, response) => {
     currentUploadId = response.body.upload_id;
     showToast('تم الرفع بنجاح – جاري المعالجة...', 'success');
@@ -290,15 +311,12 @@ uppy.on('upload-success', (file, response) => {
     startProcessing();
 });
 
+// عند حدوث خطأ
 uppy.on('upload-error', (file, error) => {
     showToast('فشل الرفع: ' + error, 'error');
     resetUploadUI();
 });
-
-// --- أزرار ---
-document.getElementById('start-archiving').addEventListener('click', () => {
-    if (!currentUploadId) showToast('يرجى اختيار ملف PDF أولاً', 'error');
-});
+</script>
 
 // --- تنظيف عند الخروج ---
 window.addEventListener('beforeunload', () => {
