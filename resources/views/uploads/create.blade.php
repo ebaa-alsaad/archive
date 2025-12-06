@@ -12,7 +12,7 @@
     <!-- حالة الرفع الأساسية -->
     <div id="upload-card" class="bg-white p-8 rounded-2xl shadow-xl border border-gray-100">
         <!-- منطقة الرفع الرئيسية -->
-        <div id="drag-drop-area" class="w-full">
+        <div id="drag-drop-area" class="w-full h-64">
             <!-- سوف يتم إضافة Uppy Dashboard هنا -->
         </div>
 
@@ -93,15 +93,33 @@
 </div>
 
 <script>
-// انتظر حتى تحميل المكتبات
+// انتظر تحميل جميع المكتبات
 document.addEventListener('DOMContentLoaded', function() {
-    initializeUppy();
+    // تأكد من تحميل Uppy قبل الاستخدام
+    if (typeof Uppy === 'undefined') {
+        showToast('جاري تحميل نظام الرفع...', 'info');
+        // حاول إعادة المحاولة بعد 500ms
+        setTimeout(initializeUppy, 500);
+    } else {
+        initializeUppy();
+    }
 });
+
+// متغيرات عامة
+let uppyInstance = null;
+let currentUploadId = null;
+let statusInterval = null;
 
 function initializeUppy() {
     try {
-        // إعداد Uppy
-        const uppy = new Uppy.Core({
+        // تأكد من وجود Uppy
+        if (typeof Uppy === 'undefined') {
+            showToast('لم يتم تحميل مكتبة الرفع. يرجى تحديث الصفحة.', 'error');
+            return;
+        }
+
+        // إنشاء نسخة Uppy
+        uppyInstance = new Uppy.Core({
             autoProceed: false,
             restrictions: {
                 maxFileSize: 250 * 1024 * 1024, // 250MB
@@ -119,10 +137,10 @@ function initializeUppy() {
         });
 
         // إضافة Dashboard
-        uppy.use(Uppy.Dashboard, {
+        uppyInstance.use(Uppy.Dashboard, {
             inline: true,
             target: '#drag-drop-area',
-            height: 300,
+            height: 250,
             showLinkToFileUploadResult: false,
             proudlyDisplayPoweredByUppy: false,
             showProgressDetails: true,
@@ -138,7 +156,7 @@ function initializeUppy() {
         });
 
         // إضافة Tus للرفع
-        uppy.use(Uppy.Tus, {
+        uppyInstance.use(Uppy.Tus, {
             endpoint: '/uploads/chunk',
             chunkSize: 5 * 1024 * 1024,
             retryDelays: [0, 1000, 3000, 5000],
@@ -150,64 +168,71 @@ function initializeUppy() {
             }
         });
 
-        // عند إضافة ملف
-        uppy.on('file-added', (file) => {
-            console.log('File added:', file.name);
-            updateFileInfo(file);
-            document.getElementById('start-archiving').disabled = false;
-        });
+        // الأحداث
+        uppyInstance.on('file-added', handleFileAdded);
+        uppyInstance.on('file-removed', handleFileRemoved);
+        uppyInstance.on('upload-progress', handleUploadProgress);
+        uppyInstance.on('upload-success', handleUploadSuccess);
+        uppyInstance.on('upload-error', handleUploadError);
 
-        // عند إزالة ملف
-        uppy.on('file-removed', () => {
-            console.log('File removed');
-            resetUploadUI();
-        });
-
-        // تقدم الرفع
-        uppy.on('upload-progress', (file, progress) => {
-            console.log('Upload progress:', progress);
-            document.getElementById('upload-progress-container').classList.remove('hidden');
-            const percentage = Math.round(progress.bytesUploaded / progress.bytesTotal * 100);
-            document.getElementById('upload-progress-bar').style.width = percentage + '%';
-            document.getElementById('upload-progress-percentage').textContent = percentage + '%';
-        });
-
-        // نجاح الرفع
-        uppy.on('upload-success', async (file, response) => {
-            console.log('Upload success:', response);
-            showToast('تم الرفع بنجاح – جاري المعالجة...', 'success');
-            document.getElementById('upload-progress-container').classList.add('hidden');
-            
-            currentUploadId = response.body?.upload_id || response.uploadURL?.split('/').pop();
-            if (currentUploadId) {
-                await startProcessing();
-            }
-        });
-
-        // خطأ في الرفع
-        uppy.on('upload-error', (file, error) => {
-            console.error('Upload error:', error);
-            showToast('فشل الرفع: ' + (error.message || 'خطأ غير معروف'), 'error');
-            resetUploadUI();
-        });
-
-        // تعيين Uppy كمتغير عام للوصول من الدوال الأخرى
-        window.uppyInstance = uppy;
+        // تعيين للوصول العالمي
+        window.uppy = uppyInstance;
+        
+        showToast('نظام الرفع جاهز', 'success');
 
     } catch (error) {
         console.error('Error initializing Uppy:', error);
-        showToast('خطأ في تحميل نظام الرفع', 'error');
+        showToast('خطأ في تحميل نظام الرفع: ' + error.message, 'error');
     }
 }
 
-// --- متغيرات عالمية ---
-let currentUploadId = null;
-let statusInterval = null;
-const archiveButton = document.getElementById('start-archiving');
-const fileInfo = document.getElementById('file-info');
-const infoFilename = document.getElementById('info-filename');
-const infoFilesize = document.getElementById('info-filesize');
-const toastContainer = document.getElementById('toast-container');
+// معالج الأحداث
+function handleFileAdded(file) {
+    console.log('File added:', file.name);
+    updateFileInfo(file);
+    document.getElementById('start-archiving').disabled = false;
+}
+
+function handleFileRemoved(file) {
+    console.log('File removed:', file.name);
+    resetUploadUI();
+}
+
+function handleUploadProgress(file, progress) {
+    document.getElementById('upload-progress-container').classList.remove('hidden');
+    const percentage = Math.round(progress.bytesUploaded / progress.bytesTotal * 100);
+    document.getElementById('upload-progress-bar').style.width = percentage + '%';
+    document.getElementById('upload-progress-percentage').textContent = percentage + '%';
+}
+
+async function handleUploadSuccess(file, response) {
+    console.log('Upload success:', response);
+    showToast('تم الرفع بنجاح – جاري المعالجة...', 'success');
+    document.getElementById('upload-progress-container').classList.add('hidden');
+    
+    // استخراج upload_id من الاستجابة
+    let uploadId = null;
+    if (response.body && response.body.upload_id) {
+        uploadId = response.body.upload_id;
+    } else if (response.uploadURL) {
+        // استخراج من URL
+        const matches = response.uploadURL.match(/uploads\/([^\/]+)/);
+        if (matches) uploadId = matches[1];
+    }
+    
+    if (uploadId) {
+        currentUploadId = uploadId;
+        await startProcessing();
+    } else {
+        showToast('لم يتم الحصول على معرف الرفع', 'error');
+    }
+}
+
+function handleUploadError(file, error) {
+    console.error('Upload error:', error);
+    showToast('فشل الرفع: ' + (error.message || 'خطأ غير معروف'), 'error');
+    resetUploadUI();
+}
 
 // --- دوال مساعدة ---
 function showToast(message, type = 'info') {
@@ -223,14 +248,19 @@ function showToast(message, type = 'info') {
         warning: 'fa-triangle-exclamation',
         info: 'fa-circle-info'
     };
+    
     const toast = document.createElement('div');
     toast.className = `p-4 rounded-lg shadow-lg border ${colors[type]} animate-fade-in flex items-center space-x-3 space-x-reverse`;
     toast.innerHTML = `<i class="fa-solid ${icons[type]}"></i><span>${message}</span>`;
-    toastContainer.appendChild(toast);
-    setTimeout(() => {
-        toast.classList.add('animate-fade-out');
-        setTimeout(() => toast.remove(), 300);
-    }, 5000);
+    
+    const container = document.getElementById('toast-container');
+    if (container) {
+        container.appendChild(toast);
+        setTimeout(() => {
+            toast.classList.add('animate-fade-out');
+            setTimeout(() => toast.remove(), 300);
+        }, 5000);
+    }
 }
 
 function formatFileSize(bytes) {
@@ -242,21 +272,39 @@ function formatFileSize(bytes) {
 }
 
 function updateFileInfo(file) {
-    infoFilename.textContent = file.name;
-    infoFilesize.textContent = formatFileSize(file.size);
-    fileInfo.classList.remove('hidden');
+    const infoFilename = document.getElementById('info-filename');
+    const infoFilesize = document.getElementById('info-filesize');
+    const fileInfo = document.getElementById('file-info');
+    
+    if (infoFilename) infoFilename.textContent = file.name;
+    if (infoFilesize) infoFilesize.textContent = formatFileSize(file.size);
+    if (fileInfo) fileInfo.classList.remove('hidden');
 }
 
 function resetUploadUI() {
-    if (window.uppyInstance) {
-        window.uppyInstance.reset();
+    if (uppyInstance) {
+        uppyInstance.reset();
     }
-    archiveButton.disabled = true;
-    fileInfo.classList.add('hidden');
-    document.getElementById('upload-progress-container').classList.add('hidden');
-    document.getElementById('processing-progress-container').classList.add('hidden');
-    document.getElementById('results-container').classList.add('hidden');
-    document.getElementById('error-container').classList.add('hidden');
+    
+    const archiveButton = document.getElementById('start-archiving');
+    if (archiveButton) {
+        archiveButton.disabled = true;
+        archiveButton.innerHTML = '<i class="fa-solid fa-paper-plane ml-2"></i> بدء عملية الأرشفة';
+    }
+    
+    const elementsToHide = [
+        'file-info',
+        'upload-progress-container',
+        'processing-progress-container',
+        'results-container',
+        'error-container'
+    ];
+    
+    elementsToHide.forEach(id => {
+        const element = document.getElementById(id);
+        if (element) element.classList.add('hidden');
+    });
+    
     currentUploadId = null;
     if (statusInterval) {
         clearInterval(statusInterval);
@@ -265,25 +313,25 @@ function resetUploadUI() {
 }
 
 // --- بدء الرفع ---
-archiveButton.addEventListener('click', async function() {
-    if (!window.uppyInstance || window.uppyInstance.getFiles().length === 0) {
+document.getElementById('start-archiving')?.addEventListener('click', async function() {
+    if (!uppyInstance || uppyInstance.getFiles().length === 0) {
         showToast('الرجاء اختيار ملف أولاً', 'warning');
         return;
     }
 
+    const button = this;
     try {
-        archiveButton.disabled = true;
-        archiveButton.innerHTML = '<i class="fa-solid fa-spinner fa-spin ml-2"></i> جاري الرفع...';
+        button.disabled = true;
+        button.innerHTML = '<i class="fa-solid fa-spinner fa-spin ml-2"></i> جاري الرفع...';
         
         // بدء الرفع
-        const uploadResult = await window.uppyInstance.upload();
-        console.log('Upload started:', uploadResult);
+        await uppyInstance.upload();
         
     } catch (error) {
         console.error('Upload start error:', error);
         showToast('فشل بدء الرفع: ' + error.message, 'error');
-        archiveButton.disabled = false;
-        archiveButton.innerHTML = '<i class="fa-solid fa-paper-plane ml-2"></i> بدء عملية الأرشفة';
+        button.disabled = false;
+        button.innerHTML = '<i class="fa-solid fa-paper-plane ml-2"></i> بدء عملية الأرشفة';
     }
 });
 
@@ -294,7 +342,10 @@ async function startProcessing() {
         return;
     }
 
-    document.getElementById('processing-progress-container').classList.remove('hidden');
+    const processingContainer = document.getElementById('processing-progress-container');
+    if (processingContainer) {
+        processingContainer.classList.remove('hidden');
+    }
     
     try {
         const processResponse = await fetch(`/uploads/${currentUploadId}/process`, {
@@ -341,10 +392,10 @@ async function startStatusChecking() {
             const progressMsg = document.getElementById('processing-progress-message');
             const details = document.getElementById('processing-details');
             
-            if (data.progress !== undefined) {
+            if (progressBar && data.progress !== undefined) {
                 const progress = Math.min(Math.max(data.progress, 0), 100);
                 progressBar.style.width = progress + '%';
-                progressPercent.textContent = progress + '%';
+                if (progressPercent) progressPercent.textContent = progress + '%';
             }
             
             if (progressMsg) progressMsg.textContent = data.message || 'جاري المعالجة...';
@@ -366,27 +417,48 @@ async function startStatusChecking() {
 
 // --- عرض النتائج ---
 function showResults(data) {
-    document.getElementById('processing-progress-container').classList.add('hidden');
-    document.getElementById('results-container').classList.remove('hidden');
-
-    const groupsCount = data.groups_count || 0;
-    const totalPages = data.total_pages || 0;
-    document.getElementById('results-message').textContent = `تم إنشاء ${groupsCount} مجموعة بنجاح`;
-    document.getElementById('results-details').textContent = `من أصل ${totalPages} صفحة`;
+    const processingContainer = document.getElementById('processing-progress-container');
+    const resultsContainer = document.getElementById('results-container');
+    
+    if (processingContainer) processingContainer.classList.add('hidden');
+    if (resultsContainer) {
+        resultsContainer.classList.remove('hidden');
+        
+        const groupsCount = data.groups_count || 0;
+        const totalPages = data.total_pages || 0;
+        
+        const resultsMessage = document.getElementById('results-message');
+        const resultsDetails = document.getElementById('results-details');
+        
+        if (resultsMessage) resultsMessage.textContent = `تم إنشاء ${groupsCount} مجموعة بنجاح`;
+        if (resultsDetails) resultsDetails.textContent = `من أصل ${totalPages} صفحة`;
+    }
 
     // إعادة تعيين زر البدء
-    archiveButton.disabled = true;
-    archiveButton.innerHTML = '<i class="fa-solid fa-paper-plane ml-2"></i> بدء عملية الأرشفة';
+    const archiveButton = document.getElementById('start-archiving');
+    if (archiveButton) {
+        archiveButton.disabled = true;
+        archiveButton.innerHTML = '<i class="fa-solid fa-paper-plane ml-2"></i> بدء عملية الأرشفة';
+    }
 }
 
 function showError(message) {
-    document.getElementById('processing-progress-container').classList.add('hidden');
-    document.getElementById('error-container').classList.remove('hidden');
-    document.getElementById('error-message').textContent = message;
+    const processingContainer = document.getElementById('processing-progress-container');
+    const errorContainer = document.getElementById('error-container');
+    
+    if (processingContainer) processingContainer.classList.add('hidden');
+    if (errorContainer) {
+        errorContainer.classList.remove('hidden');
+        const errorMessage = document.getElementById('error-message');
+        if (errorMessage) errorMessage.textContent = message;
+    }
     
     // إعادة تعيين زر البدء
-    archiveButton.disabled = false;
-    archiveButton.innerHTML = '<i class="fa-solid fa-paper-plane ml-2"></i> بدء عملية الأرشفة';
+    const archiveButton = document.getElementById('start-archiving');
+    if (archiveButton) {
+        archiveButton.disabled = false;
+        archiveButton.innerHTML = '<i class="fa-solid fa-paper-plane ml-2"></i> بدء عملية الأرشفة';
+    }
 }
 
 // --- تنظيف عند الخروج ---
@@ -394,43 +466,3 @@ window.addEventListener('beforeunload', () => {
     if (statusInterval) clearInterval(statusInterval);
 });
 </script>
-
-<style>
-.animate-fade-in {
-    animation: fadeIn 0.3s ease-in-out;
-}
-.animate-fade-out {
-    animation: fadeOut 0.3s ease-in-out;
-}
-@keyframes fadeIn {
-    from { opacity: 0; transform: translateY(-10px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-@keyframes fadeOut {
-    from { opacity: 1; transform: translateY(0); }
-    to { opacity: 0; transform: translateY(-10px); }
-}
-
-/* تأكيد ظهور Uppy */
-.uppy-Dashboard-inner {
-    border: 3px dashed #d1d5db !important;
-    border-radius: 1rem !important;
-    background-color: white !important;
-}
-
-.uppy-Dashboard-inner:hover {
-    border-color: #3b82f6 !important;
-    background-color: #f8fafc !important;
-}
-
-.uppy-Dashboard-browse {
-    color: #3b82f6 !important;
-    font-weight: bold !important;
-}
-
-.uppy-Dashboard-AddFiles-title {
-    font-family: 'Cairo', sans-serif !important;
-    font-size: 1.25rem !important;
-}
-</style>
-@endsection
